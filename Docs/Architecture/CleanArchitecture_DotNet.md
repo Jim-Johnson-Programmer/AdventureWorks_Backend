@@ -1,4 +1,4 @@
-# Clean Architecture in .NET — Step-by-Step Guide
+P# Clean Architecture in .NET — Step-by-Step Guide
 
 ## Overview
 
@@ -540,26 +540,41 @@ dotnet ef database update --project ../MyApp.MyProject.Infrastructure --startup-
 
 ---
 
-## Step 10 — Add Distributed Tracing with Jaeger
+## Step 10 — Add Observability: Tracing (Jaeger), Metrics (Prometheus), and Dashboards (Grafana)
 
-Jaeger provides distributed tracing so you can visualize request flows across services. Integration uses the **OpenTelemetry** SDK, which exports traces to a Jaeger backend.
+The three pillars of observability each address a different question:
+
+| Pillar         | Tool       | Question answered                                        |
+| -------------- | ---------- | -------------------------------------------------------- |
+| **Traces**     | Jaeger     | "Which service slowed this request down?"                |
+| **Metrics**    | Prometheus | "What is the error rate / request throughput right now?" |
+| **Dashboards** | Grafana    | "Show me everything on one screen."                      |
+
+All three are wired through the **OpenTelemetry** SDK so the application code is vendor-neutral.
 
 ### 10.1 — Install NuGet Packages
 
 Add OpenTelemetry packages to the **API** project (and optionally Infrastructure for DB tracing):
 
 ```bash
+# Core hosting and instrumentation
 dotnet add MyApp.MyProject.API package OpenTelemetry.Extensions.Hosting
 dotnet add MyApp.MyProject.API package OpenTelemetry.Instrumentation.AspNetCore
 dotnet add MyApp.MyProject.API package OpenTelemetry.Instrumentation.Http
-dotnet add MyApp.MyProject.API package OpenTelemetry.Exporter.OpenTelemetryProtocol
 dotnet add MyApp.MyProject.Infrastructure package OpenTelemetry.Instrumentation.EntityFrameworkCore --prerelease
+
+# Traces → Jaeger (via OTLP)
+dotnet add MyApp.MyProject.API package OpenTelemetry.Exporter.OpenTelemetryProtocol
+
+# Metrics → Prometheus scrape endpoint
+dotnet add MyApp.MyProject.API package OpenTelemetry.Exporter.Prometheus.AspNetCore --prerelease
 ```
 
 ### 10.2 — Configure OpenTelemetry in Program.cs
 
 ```csharp
 // MyApp.MyProject.API/Program.cs
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
@@ -570,17 +585,34 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
         .AddService(
-            serviceName: builder.Configuration["Jaeger:ServiceName"] ?? "MyApp.MyProject.API",
+            serviceName: builder.Configuration["Observability:ServiceName"] ?? "MyApp.MyProject.API",
             serviceVersion: "1.0.0"))
+
+    // ── Tracing → Jaeger ──────────────────────────────────────────────────
     .WithTracing(tracing => tracing
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
         .AddEntityFrameworkCoreInstrumentation()
+        .AddSource(AppActivitySource.Instance.Name)          // custom spans
         .AddOtlpExporter(options =>
         {
             options.Endpoint = new Uri(
-                builder.Configuration["Jaeger:OtlpEndpoint"] ?? "http://localhost:4317");
-        }));
+                builder.Configuration["Observability:JaegerOtlpEndpoint"] ?? "http://localhost:4317");
+        }))
+
+    // ── Metrics → Prometheus scrape endpoint (/metrics) ───────────────────
+    .WithMetrics(metrics => metrics
+        .AddAspNetCoreInstrumentation()      // request count, duration, errors
+        .AddHttpClientInstrumentation()      // outbound HTTP call metrics
+        .AddRuntimeInstrumentation()         // GC, thread pool, heap
+        .AddPrometheusExporter());           // exposes /metrics for Prometheus to scrape
+```
+
+Map the `/metrics` scrape endpoint in the middleware pipeline (after `app.UseHttpsRedirection()`):
+
+```csharp
+// MyApp.MyProject.API/Program.cs  (middleware pipeline section)
+app.MapPrometheusScrapingEndpoint(); // default path: /metrics
 ```
 
 ### 10.3 — Add Configuration to appsettings.json
@@ -588,19 +620,19 @@ builder.Services.AddOpenTelemetry()
 ```json
 // MyApp.MyProject.API/appsettings.json
 {
-  "Jaeger": {
+  "Observability": {
     "ServiceName": "MyApp.MyProject.API",
-    "OtlpEndpoint": "http://localhost:4317"
+    "JaegerOtlpEndpoint": "http://localhost:4317"
   }
 }
 ```
 
-For each environment override in `appsettings.Development.json`:
+Override for local development in `appsettings.Development.json`:
 
 ```json
 {
-  "Jaeger": {
-    "OtlpEndpoint": "http://localhost:4317"
+  "Observability": {
+    "JaegerOtlpEndpoint": "http://localhost:4317"
   }
 }
 ```
@@ -623,7 +655,81 @@ docker run -d --name jaeger \
 
 Open the Jaeger UI at `http://localhost:16686` after starting the application.
 
-### 10.5 — Add Custom Spans in Application Code (Optional)
+### 10.5 — Run Prometheus and Grafana Locally with Docker Compose
+
+Create `docker-compose.observability.yml` in the solution root:
+
+```yaml
+# docker-compose.observability.yml
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+
+volumes:
+  grafana-data:
+```
+
+Create the Prometheus scrape config at `observability/prometheus.yml`:
+
+```yaml
+# observability/prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "myapp-api"
+    static_configs:
+      - targets: ["host.docker.internal:5001"] # API /metrics endpoint
+    metrics_path: /metrics
+```
+
+> **Note:** Replace `host.docker.internal:5001` with the actual host and port your API runs on. On Linux hosts use your machine's LAN IP instead of `host.docker.internal`.
+
+Start the stack:
+
+```bash
+docker compose -f docker-compose.observability.yml up -d
+```
+
+| URL                     | Purpose                           |
+| ----------------------- | --------------------------------- |
+| `http://localhost:9090` | Prometheus query UI               |
+| `http://localhost:3000` | Grafana dashboard (admin / admin) |
+
+### 10.6 — Configure Grafana to Use Prometheus as a Data Source
+
+1. Open Grafana at `http://localhost:3000` and log in (admin / admin).
+2. Go to **Connections → Data Sources → Add data source**.
+3. Select **Prometheus**.
+4. Set the URL to `http://prometheus:9090` (Docker service name resolves inside the compose network).
+5. Click **Save & Test** — you should see "Data source is working".
+
+To add a pre-built ASP.NET Core dashboard:
+
+1. Go to **Dashboards → Import**.
+2. Enter dashboard ID **`19924`** (ASP.NET Core — OpenTelemetry) from grafana.com.
+3. Select the Prometheus data source and click **Import**.
+
+### 10.7 — Add Custom Spans in Application Code (Optional)
 
 Inject `ActivitySource` to create custom trace spans inside use-case handlers:
 
@@ -667,11 +773,7 @@ Register the `ActivitySource` in the Application `DependencyInjection.cs`:
 services.AddSingleton(AppActivitySource.Instance);
 ```
 
-And add it to the OpenTelemetry tracing builder in `Program.cs`:
-
-```csharp
-.AddSource(AppActivitySource.Instance.Name)
-```
+The `.AddSource(AppActivitySource.Instance.Name)` call in Step 10.2 already connects it to the OpenTelemetry tracing pipeline.
 
 ---
 
@@ -797,6 +899,325 @@ services.AddHealthChecks()
 
 ---
 
+## Step 12 — Add Resilience with Polly
+
+Polly (via `Microsoft.Extensions.Http.Resilience`) adds retry, circuit-breaker, timeout, and hedging policies to outbound `HttpClient` calls made from the Infrastructure layer. In .NET 8+ the recommended entry point is the built-in resilience pipeline; raw Polly policies are still available for fine-grained control.
+
+### 12.1 — Install NuGet Package
+
+```bash
+dotnet add MyApp.MyProject.Infrastructure package Microsoft.Extensions.Http.Resilience
+```
+
+> `Microsoft.Extensions.Http.Resilience` targets Polly v8 and integrates directly with `IHttpClientBuilder`.
+
+### 12.2 — Add a Standard Resilience Pipeline (Recommended)
+
+The standard pipeline bundles retry, circuit breaker, attempt timeout, and total request timeout with sensible defaults.
+
+```csharp
+// MyApp.MyProject.Infrastructure/DependencyInjection.cs
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
+using Microsoft.EntityFrameworkCore;
+using MyApp.MyProject.Domain.Interfaces;
+using MyApp.MyProject.Infrastructure.Persistence;
+using MyApp.MyProject.Infrastructure.Persistence.Repositories;
+
+namespace MyApp.MyProject.Infrastructure;
+
+public static class DependencyInjection
+{
+    public static IServiceCollection AddInfrastructure(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.AddDbContext<AppDbContext>(options =>
+            options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+
+        services.AddScoped<IProductRepository, ProductRepository>();
+
+        // Named HttpClient for an external API with a standard resilience pipeline
+        services.AddHttpClient("ExternalApiClient", client =>
+            {
+                client.BaseAddress = new Uri(
+                    configuration["ExternalApi:BaseUrl"] ?? "https://api.example.com");
+                client.Timeout = TimeSpan.FromSeconds(30);
+            })
+            .AddStandardResilienceHandler(); // retry + circuit-breaker + timeouts
+
+        return services;
+    }
+}
+```
+
+### 12.3 — Customise the Resilience Pipeline (Optional)
+
+Override individual pipeline options when the defaults do not fit:
+
+```csharp
+services.AddHttpClient("ExternalApiClient", client =>
+    {
+        client.BaseAddress = new Uri(configuration["ExternalApi:BaseUrl"]!);
+    })
+    .AddStandardResilienceHandler(options =>
+    {
+        // Retry up to 3 times with exponential back-off
+        options.Retry.MaxRetryAttempts = 3;
+        options.Retry.Delay = TimeSpan.FromMilliseconds(500);
+        options.Retry.UseJitter = true;
+
+        // Open the circuit after 5 failures in a 30-second window
+        options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
+        options.CircuitBreaker.MinimumThroughput = 5;
+        options.CircuitBreaker.FailureRatio = 0.5;
+
+        // Per-attempt and total timeout
+        options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(10);
+        options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(45);
+    });
+```
+
+### 12.4 — Consume the HttpClient in a Service
+
+Inject `IHttpClientFactory` into any Infrastructure service that calls external APIs:
+
+```csharp
+// MyApp.MyProject.Infrastructure/Services/ExternalProductService.cs
+using System.Net.Http.Json;
+using MyApp.MyProject.Application.Contracts;
+using MyApp.MyProject.Application.Products.DTOs;
+
+namespace MyApp.MyProject.Infrastructure.Services;
+
+public class ExternalProductService(IHttpClientFactory httpClientFactory)
+    : IExternalProductService
+{
+    public async Task<ProductDto?> GetExternalProductAsync(int id, CancellationToken ct = default)
+    {
+        var client = httpClientFactory.CreateClient("ExternalApiClient");
+        return await client.GetFromJsonAsync<ProductDto>($"/products/{id}", ct);
+    }
+}
+```
+
+Define the interface in the Application layer (it lives in `Application/Contracts/`) so Infrastructure can implement it without leaking dependencies inward:
+
+```csharp
+// MyApp.MyProject.Application/Contracts/IExternalProductService.cs
+using MyApp.MyProject.Application.Products.DTOs;
+
+namespace MyApp.MyProject.Application.Contracts;
+
+public interface IExternalProductService
+{
+    Task<ProductDto?> GetExternalProductAsync(int id, CancellationToken ct = default);
+}
+```
+
+Register the service in `Infrastructure/DependencyInjection.cs`:
+
+```csharp
+services.AddScoped<IExternalProductService, ExternalProductService>();
+```
+
+### 12.5 — Polly Policy Summary
+
+| Policy              | Default Behaviour (Standard Pipeline)                         |
+| ------------------- | ------------------------------------------------------------- |
+| **Retry**           | 3 attempts, exponential back-off with jitter                  |
+| **Circuit Breaker** | Opens after 50 % failures over a 30-second sampling window    |
+| **Attempt Timeout** | 10 seconds per individual attempt                             |
+| **Total Timeout**   | 30 seconds for the entire request (including all retries)     |
+| **Hedging**         | Not in standard pipeline; add via `AddStandardHedgingHandler` |
+
+---
+
+## Step 13 — Add an Ocelot API Gateway
+
+Ocelot is a .NET API Gateway that acts as a single entry point for client traffic. It routes requests to the appropriate downstream microservices, handles authentication, rate-limiting, load balancing, and more — without clients needing to know individual service addresses.
+
+### 13.1 — Create the Gateway Project
+
+```bash
+# Create a minimal Web API project for the gateway
+dotnet new web -n MyApp.MyProject.Gateway
+
+# Add it to the solution
+dotnet sln add MyApp.MyProject.Gateway/MyApp.MyProject.Gateway.csproj
+```
+
+> The Gateway has **no references** to any other project in the solution. It only needs Ocelot and is a standalone reverse-proxy entry point.
+
+### 13.2 — Install Ocelot
+
+```bash
+dotnet add MyApp.MyProject.Gateway package Ocelot
+```
+
+For JWT authentication forwarding also add:
+
+```bash
+dotnet add MyApp.MyProject.Gateway package Ocelot.Provider.Polly   # optional: Polly QoS in Ocelot
+dotnet add MyApp.MyProject.Gateway package Microsoft.AspNetCore.Authentication.JwtBearer
+```
+
+### 13.3 — Create ocelot.json
+
+Define the downstream routes Ocelot will proxy. Place this file in the Gateway project root.
+
+```json
+// MyApp.MyProject.Gateway/ocelot.json
+{
+  "Routes": [
+    {
+      "DownstreamPathTemplate": "/api/products/{everything}",
+      "DownstreamScheme": "https",
+      "DownstreamHostAndPorts": [{ "Host": "localhost", "Port": 7001 }],
+      "UpstreamPathTemplate": "/gateway/products/{everything}",
+      "UpstreamHttpMethod": ["GET", "POST", "PUT", "DELETE"],
+      "AuthenticationOptions": {
+        "AuthenticationProviderKey": "Bearer",
+        "AllowedScopes": []
+      },
+      "RateLimitOptions": {
+        "ClientWhitelist": [],
+        "EnableRateLimiting": true,
+        "Period": "1s",
+        "PeriodTimespan": 1,
+        "Limit": 10
+      },
+      "QoSOptions": {
+        "ExceptionsAllowedBeforeBreaking": 3,
+        "DurationOfBreak": 10000,
+        "TimeoutValue": 5000
+      }
+    }
+  ],
+  "GlobalConfiguration": {
+    "BaseUrl": "https://localhost:7000"
+  }
+}
+```
+
+| Field                    | Purpose                                                  |
+| ------------------------ | -------------------------------------------------------- |
+| `DownstreamPathTemplate` | The real URL path on the downstream service              |
+| `UpstreamPathTemplate`   | The public path clients call on the gateway              |
+| `DownstreamHostAndPorts` | Address of the actual microservice                       |
+| `AuthenticationOptions`  | Enforce a JWT bearer token before forwarding the request |
+| `RateLimitOptions`       | Per-client request rate limiting                         |
+| `QoSOptions`             | Polly circuit-breaker and timeout applied by Ocelot      |
+
+Create an environment-specific override for local development:
+
+```json
+// MyApp.MyProject.Gateway/ocelot.Development.json
+{
+  "Routes": [
+    {
+      "DownstreamPathTemplate": "/api/products/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [{ "Host": "localhost", "Port": 5001 }],
+      "UpstreamPathTemplate": "/gateway/products/{everything}",
+      "UpstreamHttpMethod": ["GET", "POST", "PUT", "DELETE"]
+    }
+  ],
+  "GlobalConfiguration": {
+    "BaseUrl": "http://localhost:5000"
+  }
+}
+```
+
+### 13.4 — Configure Program.cs
+
+```csharp
+// MyApp.MyProject.Gateway/Program.cs
+using Ocelot.DependencyInjection;
+using Ocelot.Middleware;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Load ocelot.json (and environment override if present)
+builder.Configuration
+    .AddJsonFile("ocelot.json", optional: false, reloadOnChange: true)
+    .AddJsonFile($"ocelot.{builder.Environment.EnvironmentName}.json",
+                 optional: true, reloadOnChange: true);
+
+// JWT authentication — the gateway validates the token and forwards claims
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer("Bearer", options =>
+    {
+        options.Authority = builder.Configuration["Jwt:Authority"];
+        options.Audience  = builder.Configuration["Jwt:Audience"];
+    });
+
+builder.Services.AddOcelot(builder.Configuration);
+
+var app = builder.Build();
+
+app.UseAuthentication();
+
+await app.UseOcelot();
+
+app.Run();
+```
+
+### 13.5 — Add Gateway Configuration to appsettings.json
+
+```json
+// MyApp.MyProject.Gateway/appsettings.json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning",
+      "Ocelot": "Warning"
+    }
+  },
+  "Jwt": {
+    "Authority": "https://your-identity-provider",
+    "Audience": "your-api-audience"
+  }
+}
+```
+
+### 13.6 — Register the Gateway in the Solution
+
+```bash
+# The gateway project is already added to the solution (Step 13.1).
+# To run it together with the API during development, use a launch profile
+# or the .NET Aspire orchestration (if applicable).
+
+# Verify the solution structure
+dotnet sln list
+```
+
+### 13.7 — Gateway Architecture Overview
+
+```
+Client
+  │
+  ▼
+┌─────────────────────────────────────────┐
+│  MyApp.MyProject.Gateway  (port 5000)   │  ← Ocelot (routing, auth, rate-limit, QoS)
+└─────────────────────────────────────────┘
+  │  /gateway/products/{id}  →  /api/products/{id}
+  ▼
+┌─────────────────────────────────────────┐
+│  MyApp.MyProject.API      (port 5001)   │  ← Clean Architecture API (Controllers → MediatR)
+└─────────────────────────────────────────┘
+  │
+  ▼
+┌─────────────────────────────────────────┐
+│  SQL Server / External APIs             │
+└─────────────────────────────────────────┘
+```
+
+---
+
 ## Final Folder Structure
 
 ```
@@ -814,6 +1235,8 @@ MyApp/
     │       └── NotFoundException.cs
     ├── MyApp.MyProject.Application/
     │   ├── DependencyInjection.cs
+    │   ├── Contracts/
+    │   │   └── IExternalProductService.cs        ← added in Step 12
     │   └── Products/
     │       ├── Commands/
     │       │   ├── CreateProductCommand.cs
@@ -824,18 +1247,26 @@ MyApp/
     │           └── ProductDto.cs
     ├── MyApp.MyProject.Infrastructure/
     │   ├── DependencyInjection.cs
-    │   └── Persistence/
-    │       ├── AppDbContext.cs
-    │       ├── Configurations/
-    │       │   └── ProductConfiguration.cs
-    │       └── Repositories/
-    │           └── ProductRepository.cs
-    └── MyApp.MyProject.API/
+    │   ├── Persistence/
+    │   │   ├── AppDbContext.cs
+    │   │   ├── Configurations/
+    │   │   │   └── ProductConfiguration.cs
+    │   │   └── Repositories/
+    │   │       └── ProductRepository.cs
+    │   ├── Services/
+    │   │   └── ExternalProductService.cs         ← added in Step 12 (Polly HttpClient)
+    │   └── HealthChecks/
+    │       └── ExternalApiHealthCheck.cs
+    ├── MyApp.MyProject.API/
+    │   ├── Program.cs
+    │   ├── Controllers/
+    │   │   └── ProductsController.cs
+    │   └── Middleware/
+    │       └── ExceptionHandlingMiddleware.cs
+    └── MyApp.MyProject.Gateway/                  ← added in Step 13 (Ocelot)
         ├── Program.cs
-        ├── Controllers/
-        │   └── ProductsController.cs
-        └── Middleware/
-            └── ExceptionHandlingMiddleware.cs
+        ├── ocelot.json
+        └── ocelot.Development.json
 ```
 
 ---
