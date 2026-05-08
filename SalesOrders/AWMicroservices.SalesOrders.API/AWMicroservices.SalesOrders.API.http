@@ -1,0 +1,6 @@
+@AWMicroservices.SalesOrders.API_HostAddress = http://localhost:5058
+
+GET {{AWMicroservices.SalesOrders.API_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

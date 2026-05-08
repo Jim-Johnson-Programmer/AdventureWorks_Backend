@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj" />
+  <Project Path="AWMicroservices.SalesOrders.Application/AWMicroservices.SalesOrders.Application.csproj" />
+  <Project Path="AWMicroservices.SalesOrders.Domain/AWMicroservices.SalesOrders.Domain.csproj" />
+  <Project Path="AWMicroservices.SalesOrders.Infrastructure/AWMicroservices.SalesOrders.Infrastructure.csproj" />
+</Solution>
