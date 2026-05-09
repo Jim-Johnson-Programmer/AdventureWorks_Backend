@@ -11,7 +11,7 @@ public class CreateSalesOrderHandler(ISalesOrderRepository repository)
 {
   public async Task<int> Handle(CreateSalesOrderCommand request, CancellationToken ct)
   {
-    var salesOrder = new SalesOrder(0, request.OrderNumber, request.OrderDate, request.TotalAmount);
+    var salesOrder = new SalesOrder(request.OrderNumber, request.OrderDate, request.TotalAmount);
     await repository.AddAsync(salesOrder, ct);
     return salesOrder.Id;
   }
