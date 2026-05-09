@@ -1,4 +1,4 @@
-P# Clean Architecture in .NET — Step-by-Step Guide
+# Clean Architecture in .NET — Step-by-Step Guide
 
 ## Overview
 
@@ -101,8 +101,8 @@ Provide the exported `.sql` file to an AI tool (e.g., GitHub Copilot, ChatGPT) w
 
 The AI will produce:
 
-| Output                          | Target Location                                            |
-| ------------------------------- | ---------------------------------------------------------- |
+| Output                          | Target Location                                                      |
+| ------------------------------- | -------------------------------------------------------------------- |
 | Entity classes                  | `AWMicroservices.MyProject.Domain/Entities/`                         |
 | `IRepository` interfaces        | `AWMicroservices.MyProject.Domain/Interfaces/`                       |
 | `AppDbContext` + Fluent configs | `AWMicroservices.MyProject.Infrastructure/Persistence/`              |
