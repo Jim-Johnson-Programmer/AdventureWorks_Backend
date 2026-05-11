@@ -98,11 +98,13 @@ Add Serilog packages to the **API** project (from the workspace root):
 dotnet add src/SalesOrders/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.AspNetCore
 dotnet add src/SalesOrders/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.Sinks.File
 dotnet add src/SalesOrders/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.Formatting.Compact
+dotnet add src/SalesOrders/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.Enrichers.Environment
 ```
 
 > `Serilog.AspNetCore` pulls in the core Serilog library and the `UseSerilog` host integration.  
 > `Serilog.Sinks.File` provides rolling-file support.  
-> `Serilog.Formatting.Compact` writes structured JSON logs that are easy to query with tools like Seq or jq.
+> `Serilog.Formatting.Compact` writes structured JSON logs that are easy to query with tools like Seq or jq.  
+> `Serilog.Enrichers.Environment` enables `.Enrich.WithEnvironmentName()` and `.Enrich.WithMachineName()` for logging environment and machine info.
 
 ### 4.2 — Create a Logging Extension Method
 
