@@ -3,7 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using AWMicroservices.SalesOrders.Domain.Interfaces;
 using AWMicroservices.SalesOrders.Infrastructure.Persistence;
-using AWMicroservices.SalesOrders.Infrastructure.Persistence.Repositories;
+// using AWMicroservices.SalesOrders.Infrastructure.Persistence.Repositories;
 
 namespace AWMicroservices.SalesOrders.Infrastructure;
 
@@ -15,8 +15,6 @@ public static class DependencyInjection
   {
     services.AddDbContext<AppDbContext>(options =>
         options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
-
-    services.AddScoped<ISalesOrderRepository, SalesOrderRepository>();
 
     return services;
   }

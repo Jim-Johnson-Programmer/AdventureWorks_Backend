@@ -5,7 +5,6 @@ namespace AWMicroservices.SalesOrders.Infrastructure.Persistence;
 
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
-  public DbSet<SalesOrder> SalesOrders => Set<SalesOrder>();
   public DbSet<Person> Persons => Set<Person>();
   public DbSet<Address> Addresses => Set<Address>();
   public DbSet<Customer> Customers => Set<Customer>();
