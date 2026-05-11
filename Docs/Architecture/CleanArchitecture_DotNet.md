@@ -31,10 +31,12 @@ Clean Architecture (by Robert C. Martin) organizes code into concentric layers w
 
 ---
 
-## Step 1 — Create the Solution
+## Step 1 — Create the Solution Structure
+
+From your workspace root, create the solution and standard subdirectories:
 
 ```bash
-mkdir AWMicroservices && cd AWMicroservices
+mkdir -p docs src tests
 dotnet new sln -n AWMicroservices
 ```
 
@@ -42,26 +44,26 @@ dotnet new sln -n AWMicroservices
 
 ## Step 2 — Create the Projects
 
-Create one class library per layer, plus a Web API project:
+Create one class library per layer, plus a Web API project, inside the `src` directory:
 
 ```bash
 # Domain — innermost layer, no dependencies
-dotnet new classlib -n AWMicroservices.MyProject.Domain
+dotnet new classlib -n AWMicroservices.SalesOrders.Domain -o src/AWMicroservices.SalesOrders.Domain
 
 # Application — orchestrates use cases
-dotnet new classlib -n AWMicroservices.MyProject.Application
+dotnet new classlib -n AWMicroservices.SalesOrders.Application -o src/AWMicroservices.SalesOrders.Application
 
 # Infrastructure — external concerns (DB, APIs, Email, etc.)
-dotnet new classlib -n AWMicroservices.MyProject.Infrastructure
+dotnet new classlib -n AWMicroservices.SalesOrders.Infrastructure -o src/AWMicroservices.SalesOrders.Infrastructure
 
 # Presentation — API entry point
-dotnet new webapi -n AWMicroservices.MyProject.API
+dotnet new webapi -n AWMicroservices.SalesOrders.API -o src/AWMicroservices.SalesOrders.API
 
-# Add all projects to the solution
-dotnet sln add AWMicroservices.MyProject.Domain/AWMicroservices.MyProject.Domain.csproj
-dotnet sln add AWMicroservices.MyProject.Application/AWMicroservices.MyProject.Application.csproj
-dotnet sln add AWMicroservices.MyProject.Infrastructure/AWMicroservices.MyProject.Infrastructure.csproj
-dotnet sln add AWMicroservices.MyProject.API/AWMicroservices.MyProject.API.csproj
+# Add all projects to the solution (from solution root)
+dotnet sln add src/AWMicroservices.SalesOrders.Domain/AWMicroservices.SalesOrders.Domain.csproj
+dotnet sln add src/AWMicroservices.SalesOrders.Application/AWMicroservices.SalesOrders.Application.csproj
+dotnet sln add src/AWMicroservices.SalesOrders.Infrastructure/AWMicroservices.SalesOrders.Infrastructure.csproj
+dotnet sln add src/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj
 ```
 
 ---
@@ -70,14 +72,14 @@ dotnet sln add AWMicroservices.MyProject.API/AWMicroservices.MyProject.API.cspro
 
 ```bash
 # Application depends on Domain
-dotnet add AWMicroservices.MyProject.Application reference AWMicroservices.MyProject.Domain
+dotnet add src/AWMicroservices.SalesOrders.Application/AWMicroservices.SalesOrders.Application.csproj reference src/AWMicroservices.SalesOrders.Domain/AWMicroservices.SalesOrders.Domain.csproj
 
 # Infrastructure depends on Application (implements its interfaces)
-dotnet add AWMicroservices.MyProject.Infrastructure reference AWMicroservices.MyProject.Application
+dotnet add src/AWMicroservices.SalesOrders.Infrastructure/AWMicroservices.SalesOrders.Infrastructure.csproj reference src/AWMicroservices.SalesOrders.Application/AWMicroservices.SalesOrders.Application.csproj
 
 # API depends on Application and Infrastructure (for DI registration)
-dotnet add AWMicroservices.MyProject.API reference AWMicroservices.MyProject.Application
-dotnet add AWMicroservices.MyProject.API reference AWMicroservices.MyProject.Infrastructure
+dotnet add src/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj reference src/AWMicroservices.SalesOrders.Application/AWMicroservices.SalesOrders.Application.csproj
+dotnet add src/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj reference src/AWMicroservices.SalesOrders.Infrastructure/AWMicroservices.SalesOrders.Infrastructure.csproj
 ```
 
 > **Note:** `Infrastructure` and `API` must never be referenced by inner layers.
@@ -90,12 +92,12 @@ Structured, rolling-file logging is added here — before any application code i
 
 ### 4.1 — Install NuGet Packages
 
-Add Serilog packages to the **API** project:
+Add Serilog packages to the **API** project (from the workspace root):
 
 ```bash
-dotnet add AWMicroservices.MyProject.API package Serilog.AspNetCore
-dotnet add AWMicroservices.MyProject.API package Serilog.Sinks.File
-dotnet add AWMicroservices.MyProject.API package Serilog.Formatting.Compact
+dotnet add src/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.AspNetCore
+dotnet add src/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.Sinks.File
+dotnet add src/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.Formatting.Compact
 ```
 
 > `Serilog.AspNetCore` pulls in the core Serilog library and the `UseSerilog` host integration.  
@@ -107,11 +109,11 @@ dotnet add AWMicroservices.MyProject.API package Serilog.Formatting.Compact
 Encapsulating the Serilog configuration in an extension method means you can swap sinks later by changing only this file.
 
 ```csharp
-// AWMicroservices.MyProject.API/Extensions/LoggingExtensions.cs
+// AWMicroservices.SalesOrders.API/Extensions/LoggingExtensions.cs
 using Serilog;
 using Serilog.Formatting.Compact;
 
-namespace AWMicroservices.MyProject.API.Extensions;
+namespace AWMicroservices.SalesOrders.API.Extensions;
 
 public static class LoggingExtensions
 {
@@ -155,8 +157,8 @@ Serilog must replace the default logging provider at host-builder time, before t
 ### 4.3 — Wire Serilog into Program.cs
 
 ```csharp
-// AWMicroservices.MyProject.API/Program.cs
-using AWMicroservices.MyProject.API.Extensions;
+// AWMicroservices.SalesOrders.API/Program.cs
+using AWMicroservices.SalesOrders.API.Extensions;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -181,7 +183,7 @@ app.Run();
 Override minimum levels per namespace in `appsettings.json` without touching code:
 
 ```json
-// AWMicroservices.MyProject.API/appsettings.json  (add to existing file)
+// AWMicroservices.SalesOrders.API/appsettings.json  (add to existing file)
 {
   "Serilog": {
     "MinimumLevel": {
@@ -294,7 +296,7 @@ Adding Swagger to your Clean Architecture project provides interactive API docum
 Add the Swagger generator package to the **API** project:
 
 ```bash
-dotnet add AWMicroservices.MyProject.API package Swashbuckle.AspNetCore
+dotnet add AWMicroservices.SalesOrders.API package Swashbuckle.AspNetCore
 ```
 
 ### 5.2 — Register Swagger Services
@@ -302,7 +304,7 @@ dotnet add AWMicroservices.MyProject.API package Swashbuckle.AspNetCore
 In `Program.cs`, register Swagger services:
 
 ```csharp
-// AWMicroservices.MyProject.API/Program.cs
+// AWMicroservices.SalesOrders.API/Program.cs
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 ```
@@ -340,6 +342,7 @@ Before writing any code, export a full database script from the existing SQL Ser
      - **Types of data to script:** `Schema and Data` (or `Schema only` if only structure is needed)
      - **Script DROP and CREATE:** `Script CREATE`
      - **Include descriptive headers:** `True`
+
 5. Save the output as a single `.sql` file (e.g., `AdventureWorks_FullScript.sql`).
 
 ### 6.2 — Use the Script with AI to Generate the Data Layer
@@ -350,12 +353,12 @@ Provide the exported `.sql` file to an AI tool (e.g., GitHub Copilot, ChatGPT) w
 
 The AI will produce:
 
-| Output                          | Target Location                                                      |
-| ------------------------------- | -------------------------------------------------------------------- |
-| Entity classes                  | `AWMicroservices.MyProject.Domain/Entities/`                         |
-| `IRepository` interfaces        | `AWMicroservices.MyProject.Domain/Interfaces/`                       |
-| `AppDbContext` + Fluent configs | `AWMicroservices.MyProject.Infrastructure/Persistence/`              |
-| Repository implementations      | `AWMicroservices.MyProject.Infrastructure/Persistence/Repositories/` |
+| Output                          | Target Location                                                        |
+| ------------------------------- | ---------------------------------------------------------------------- |
+| Entity classes                  | `AWMicroservices.SalesOrders.Domain/Entities/`                         |
+| `IRepository` interfaces        | `AWMicroservices.SalesOrders.Domain/Interfaces/`                       |
+| `AppDbContext` + Fluent configs | `AWMicroservices.SalesOrders.Infrastructure/Persistence/`              |
+| Repository implementations      | `AWMicroservices.SalesOrders.Infrastructure/Persistence/Repositories/` |
 
 > **Note:** Review and adjust the AI-generated code before placing it in the project. The steps that follow — Domain, Application, Infrastructure, and API layers — build directly on these generated entities and interfaces.
 
@@ -368,8 +371,8 @@ The Domain layer contains **pure business logic** with no external dependencies.
 ### 7.1 — Install Entity Framework Core (for Infrastructure Layer)
 
 ```bash
-dotnet add AWMicroservices.MyProject.Infrastructure package Microsoft.EntityFrameworkCore.SqlServer
-dotnet add AWMicroservices.MyProject.Infrastructure package Microsoft.EntityFrameworkCore.Tools
+dotnet add AWMicroservices.SalesOrders.Infrastructure package Microsoft.EntityFrameworkCore.SqlServer
+dotnet add AWMicroservices.SalesOrders.Infrastructure package Microsoft.EntityFrameworkCore.Tools
 ```
 
 ### 7.2 — Entities
@@ -377,8 +380,8 @@ dotnet add AWMicroservices.MyProject.Infrastructure package Microsoft.EntityFram
 For this project, we have imported all relevant entities from the AdventureWorks database using AI-assisted generation based on the exported SQL script (see Step 5.2). The entities are placed in the `Domain/Entities/` folder, following Clean Architecture principles with private setters, guard clauses, and EF Core compatibility.
 
 ```csharp
-// Example: AWMicroservices.MyProject.Domain/Entities/Product.cs (AI-generated from SQL script)
-namespace AWMicroservices.MyProject.Domain.Entities;
+// Example: AWMicroservices.SalesOrders.Domain/Entities/Product.cs (AI-generated from SQL script)
+namespace AWMicroservices.SalesOrders.Domain.Entities;
 
 public class Product
 {
@@ -451,8 +454,8 @@ public class Product
 For this project, we have generated all repository interfaces for the imported entities using AI-assisted generation based on the entities and SQL script (see Step 5.2). The interfaces are placed in the `Domain/Interfaces/` folder.
 
 ```csharp
-// Example: AWMicroservices.MyProject.Domain/Interfaces/IProductRepository.cs (AI-generated from entities and SQL script)
-namespace AWMicroservices.MyProject.Domain.Interfaces;
+// Example: AWMicroservices.SalesOrders.Domain/Interfaces/IProductRepository.cs (AI-generated from entities and SQL script)
+namespace AWMicroservices.SalesOrders.Domain.Interfaces;
 
 public interface IProductRepository
 {
@@ -467,8 +470,8 @@ public interface IProductRepository
 ### 7.4 — Value Objects (optional but recommended)
 
 ```csharp
-// AWMicroservices.MyProject.Domain/ValueObjects/Money.cs
-namespace AWMicroservices.MyProject.Domain.ValueObjects;
+// AWMicroservices.SalesOrders.Domain/ValueObjects/Money.cs
+namespace AWMicroservices.SalesOrders.Domain.ValueObjects;
 
 public record Money(decimal Amount, string Currency)
 {
@@ -479,8 +482,8 @@ public record Money(decimal Amount, string Currency)
 ### 7.5 — Domain Exceptions
 
 ```csharp
-// AWMicroservices.MyProject.Domain/Exceptions/NotFoundException.cs
-namespace AWMicroservices.MyProject.Domain.Exceptions;
+// AWMicroservices.SalesOrders.Domain/Exceptions/NotFoundException.cs
+namespace AWMicroservices.SalesOrders.Domain.Exceptions;
 
 public class NotFoundException(string entityName, object key)
     : Exception($"{entityName} with key '{key}' was not found.");
@@ -495,15 +498,15 @@ The Application layer contains **use cases** (business workflows). It depends on
 ### 8.1 — Install MediatR
 
 ```bash
-dotnet add AWMicroservices.MyProject.Application package MediatR
-dotnet add AWMicroservices.MyProject.Application package FluentValidation
+dotnet add AWMicroservices.SalesOrders.Application package MediatR
+dotnet add AWMicroservices.SalesOrders.Application package FluentValidation
 ```
 
 ### 8.2 — DTOs
 
 ```csharp
-// AWMicroservices.MyProject.Application/Products/DTOs/ProductDto.cs
-namespace AWMicroservices.MyProject.Application.Products.DTOs;
+// AWMicroservices.SalesOrders.Application/Products/DTOs/ProductDto.cs
+namespace AWMicroservices.SalesOrders.Application.Products.DTOs;
 
 public record ProductDto(int Id, string Name, decimal Price);
 ```
@@ -511,11 +514,11 @@ public record ProductDto(int Id, string Name, decimal Price);
 ### 8.3 — CQRS Queries
 
 ```csharp
-// AWMicroservices.MyProject.Application/Products/Queries/GetProductByIdQuery.cs
+// AWMicroservices.SalesOrders.Application/Products/Queries/GetProductByIdQuery.cs
 using MediatR;
-using AWMicroservices.MyProject.Application.Products.DTOs;
+using AWMicroservices.SalesOrders.Application.Products.DTOs;
 
-namespace AWMicroservices.MyProject.Application.Products.Queries;
+namespace AWMicroservices.SalesOrders.Application.Products.Queries;
 
 public record GetProductByIdQuery(int Id) : IRequest<ProductDto?>;
 
@@ -534,10 +537,10 @@ public class GetProductByIdHandler(IProductRepository repository)
 ### 8.4 — CQRS Commands
 
 ```csharp
-// AWMicroservices.MyProject.Application/Products/Commands/CreateProductCommand.cs
+// AWMicroservices.SalesOrders.Application/Products/Commands/CreateProductCommand.cs
 using MediatR;
 
-namespace AWMicroservices.MyProject.Application.Products.Commands;
+namespace AWMicroservices.SalesOrders.Application.Products.Commands;
 
 public record CreateProductCommand(string Name, decimal Price) : IRequest<int>;
 
@@ -556,10 +559,10 @@ public class CreateProductHandler(IProductRepository repository)
 ### 8.5 — Validation with FluentValidation
 
 ```csharp
-// AWMicroservices.MyProject.Application/Products/Commands/CreateProductCommandValidator.cs
+// AWMicroservices.SalesOrders.Application/Products/Commands/CreateProductCommandValidator.cs
 using FluentValidation;
 
-namespace AWMicroservices.MyProject.Application.Products.Commands;
+namespace AWMicroservices.SalesOrders.Application.Products.Commands;
 
 public class CreateProductCommandValidator : AbstractValidator<CreateProductCommand>
 {
@@ -574,12 +577,12 @@ public class CreateProductCommandValidator : AbstractValidator<CreateProductComm
 ### 8.6 — Register Application Services
 
 ```csharp
-// AWMicroservices.MyProject.Application/DependencyInjection.cs
+// AWMicroservices.SalesOrders.Application/DependencyInjection.cs
 using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace AWMicroservices.MyProject.Application;
+namespace AWMicroservices.SalesOrders.Application;
 
 public static class DependencyInjection
 {
@@ -601,11 +604,11 @@ The Infrastructure layer implements interfaces defined in Domain/Application.
 ### 9.1 — DbContext
 
 ```csharp
-// AWMicroservices.MyProject.Infrastructure/Persistence/AppDbContext.cs
+// AWMicroservices.SalesOrders.Infrastructure/Persistence/AppDbContext.cs
 using Microsoft.EntityFrameworkCore;
-using AWMicroservices.MyProject.Domain.Entities;
+using AWMicroservices.SalesOrders.Domain.Entities;
 
-namespace AWMicroservices.MyProject.Infrastructure.Persistence;
+namespace AWMicroservices.SalesOrders.Infrastructure.Persistence;
 
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
@@ -621,12 +624,12 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 ### 9.2 — Entity Configuration
 
 ```csharp
-// AWMicroservices.MyProject.Infrastructure/Persistence/Configurations/ProductConfiguration.cs
+// AWMicroservices.SalesOrders.Infrastructure/Persistence/Configurations/ProductConfiguration.cs
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
-using AWMicroservices.MyProject.Domain.Entities;
+using AWMicroservices.SalesOrders.Domain.Entities;
 
-namespace AWMicroservices.MyProject.Infrastructure.Persistence.Configurations;
+namespace AWMicroservices.SalesOrders.Infrastructure.Persistence.Configurations;
 
 public class ProductConfiguration : IEntityTypeConfiguration<Product>
 {
@@ -642,12 +645,12 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 ### 9.3 — Repository Implementation
 
 ```csharp
-// AWMicroservices.MyProject.Infrastructure/Persistence/Repositories/ProductRepository.cs
+// AWMicroservices.SalesOrders.Infrastructure/Persistence/Repositories/ProductRepository.cs
 using Microsoft.EntityFrameworkCore;
-using AWMicroservices.MyProject.Domain.Entities;
-using AWMicroservices.MyProject.Domain.Interfaces;
+using AWMicroservices.SalesOrders.Domain.Entities;
+using AWMicroservices.SalesOrders.Domain.Interfaces;
 
-namespace AWMicroservices.MyProject.Infrastructure.Persistence.Repositories;
+namespace AWMicroservices.SalesOrders.Infrastructure.Persistence.Repositories;
 
 public class ProductRepository(AppDbContext context) : IProductRepository
 {
@@ -684,15 +687,15 @@ public class ProductRepository(AppDbContext context) : IProductRepository
 ### 9.4 — Register Infrastructure Services
 
 ```csharp
-// AWMicroservices.MyProject.Infrastructure/DependencyInjection.cs
+// AWMicroservices.SalesOrders.Infrastructure/DependencyInjection.cs
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
-using AWMicroservices.MyProject.Domain.Interfaces;
-using AWMicroservices.MyProject.Infrastructure.Persistence;
-using AWMicroservices.MyProject.Infrastructure.Persistence.Repositories;
+using AWMicroservices.SalesOrders.Domain.Interfaces;
+using AWMicroservices.SalesOrders.Infrastructure.Persistence;
+using AWMicroservices.SalesOrders.Infrastructure.Persistence.Repositories;
 
-namespace AWMicroservices.MyProject.Infrastructure;
+namespace AWMicroservices.SalesOrders.Infrastructure;
 
 public static class DependencyInjection
 {
@@ -717,9 +720,9 @@ public static class DependencyInjection
 ### 10.1 — Wire Up DI in Program.cs
 
 ```csharp
-// AWMicroservices.MyProject.API/Program.cs
-using AWMicroservices.MyProject.Application;
-using AWMicroservices.MyProject.Infrastructure;
+// AWMicroservices.SalesOrders.API/Program.cs
+using AWMicroservices.SalesOrders.Application;
+using AWMicroservices.SalesOrders.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -745,13 +748,13 @@ app.Run();
 ### 9.2 — Controller
 
 ```csharp
-// AWMicroservices.MyProject.API/Controllers/ProductsController.cs
+// AWMicroservices.SalesOrders.API/Controllers/ProductsController.cs
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
-using AWMicroservices.MyProject.Application.Products.Commands;
-using AWMicroservices.MyProject.Application.Products.Queries;
+using AWMicroservices.SalesOrders.Application.Products.Commands;
+using AWMicroservices.SalesOrders.Application.Products.Queries;
 
-namespace AWMicroservices.MyProject.API.Controllers;
+namespace AWMicroservices.SalesOrders.API.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
@@ -776,10 +779,10 @@ public class ProductsController(IMediator mediator) : ControllerBase
 ### 9.3 — Global Exception Handling (optional but recommended)
 
 ```csharp
-// AWMicroservices.MyProject.API/Middleware/ExceptionHandlingMiddleware.cs
-using AWMicroservices.MyProject.Domain.Exceptions;
+// AWMicroservices.SalesOrders.API/Middleware/ExceptionHandlingMiddleware.cs
+using AWMicroservices.SalesOrders.Domain.Exceptions;
 
-namespace AWMicroservices.MyProject.API.Middleware;
+namespace AWMicroservices.SalesOrders.API.Middleware;
 
 public class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
 {
@@ -818,15 +821,15 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 Once all AI-generated and hand-crafted code from the previous steps has been reviewed and placed in the correct projects:
 
 ```bash
-cd AWMicroservices.MyProject.API
+cd AWMicroservices.SalesOrders.API
 
 dotnet add package Microsoft.EntityFrameworkCore.Design
 
 # Create the initial migration
-dotnet ef migrations add InitialCreate --project ../AWMicroservices.MyProject.Infrastructure --startup-project .
+dotnet ef migrations add InitialCreate --project ../AWMicroservices.SalesOrders.Infrastructure --startup-project .
 
 # Apply migrations to the database
-dotnet ef database update --project ../AWMicroservices.MyProject.Infrastructure --startup-project .
+dotnet ef database update --project ../AWMicroservices.SalesOrders.Infrastructure --startup-project .
 ```
 
 ---
@@ -849,22 +852,22 @@ Add OpenTelemetry packages to the **API** project (and optionally Infrastructure
 
 ```bash
 # Core hosting and instrumentation
-dotnet add AWMicroservices.MyProject.API package OpenTelemetry.Extensions.Hosting
-dotnet add AWMicroservices.MyProject.API package OpenTelemetry.Instrumentation.AspNetCore
-dotnet add AWMicroservices.MyProject.API package OpenTelemetry.Instrumentation.Http
-dotnet add AWMicroservices.MyProject.Infrastructure package OpenTelemetry.Instrumentation.EntityFrameworkCore --prerelease
+dotnet add AWMicroservices.SalesOrders.API package OpenTelemetry.Extensions.Hosting
+dotnet add AWMicroservices.SalesOrders.API package OpenTelemetry.Instrumentation.AspNetCore
+dotnet add AWMicroservices.SalesOrders.API package OpenTelemetry.Instrumentation.Http
+dotnet add AWMicroservices.SalesOrders.Infrastructure package OpenTelemetry.Instrumentation.EntityFrameworkCore --prerelease
 
 # Traces → Jaeger (via OTLP)
-dotnet add AWMicroservices.MyProject.API package OpenTelemetry.Exporter.OpenTelemetryProtocol
+dotnet add AWMicroservices.SalesOrders.API package OpenTelemetry.Exporter.OpenTelemetryProtocol
 
 # Metrics → Prometheus scrape endpoint
-dotnet add AWMicroservices.MyProject.API package OpenTelemetry.Exporter.Prometheus.AspNetCore --prerelease
+dotnet add AWMicroservices.SalesOrders.API package OpenTelemetry.Exporter.Prometheus.AspNetCore --prerelease
 ```
 
 ### 11.2 — Configure OpenTelemetry in Program.cs
 
 ```csharp
-// AWMicroservices.MyProject.API/Program.cs
+// AWMicroservices.SalesOrders.API/Program.cs
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -876,7 +879,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource
         .AddService(
-            serviceName: builder.Configuration["Observability:ServiceName"] ?? "AWMicroservices.MyProject.API",
+            serviceName: builder.Configuration["Observability:ServiceName"] ?? "AWMicroservices.SalesOrders.API",
             serviceVersion: "1.0.0"))
 
     // ── Tracing → Jaeger ──────────────────────────────────────────────────
@@ -902,17 +905,17 @@ builder.Services.AddOpenTelemetry()
 Map the `/metrics` scrape endpoint in the middleware pipeline (after `app.UseHttpsRedirection()`):
 
 ```csharp
-// AWMicroservices.MyProject.API/Program.cs  (middleware pipeline section)
+// AWMicroservices.SalesOrders.API/Program.cs  (middleware pipeline section)
 app.MapPrometheusScrapingEndpoint(); // default path: /metrics
 ```
 
 ### 11.3 — Add Configuration to appsettings.json
 
 ```json
-// AWMicroservices.MyProject.API/appsettings.json
+// AWMicroservices.SalesOrders.API/appsettings.json
 {
   "Observability": {
-    "ServiceName": "AWMicroservices.MyProject.API",
+    "ServiceName": "AWMicroservices.SalesOrders.API",
     "JaegerOtlpEndpoint": "http://localhost:4317"
   }
 }
@@ -1025,15 +1028,15 @@ To add a pre-built ASP.NET Core dashboard:
 Inject `ActivitySource` to create custom trace spans inside use-case handlers:
 
 ```csharp
-// AWMicroservices.MyProject.Application/Tracing/AppActivitySource.cs
+// AWMicroservices.SalesOrders.Application/Tracing/AppActivitySource.cs
 using System.Diagnostics;
 
-namespace AWMicroservices.MyProject.Application.Tracing;
+namespace AWMicroservices.SalesOrders.Application.Tracing;
 
 public static class AppActivitySource
 {
     public static readonly ActivitySource Instance =
-        new("AWMicroservices.MyProject.Application", "1.0.0");
+        new("AWMicroservices.SalesOrders.Application", "1.0.0");
 }
 ```
 
@@ -1041,7 +1044,7 @@ Usage inside a MediatR handler:
 
 ```csharp
 using System.Diagnostics;
-using AWMicroservices.MyProject.Application.Tracing;
+using AWMicroservices.SalesOrders.Application.Tracing;
 
 public class GetProductByIdHandler(IProductRepository repository)
     : IRequestHandler<GetProductByIdQuery, ProductDto?>
@@ -1075,17 +1078,17 @@ Health checks expose HTTP endpoints that monitoring systems, container orchestra
 ### 12.1 — Install NuGet Packages
 
 ```bash
-dotnet add AWMicroservices.MyProject.API package Microsoft.Extensions.Diagnostics.HealthChecks
-dotnet add AWMicroservices.MyProject.API package AspNetCore.HealthChecks.SqlServer
-dotnet add AWMicroservices.MyProject.API package AspNetCore.HealthChecks.UI
-dotnet add AWMicroservices.MyProject.API package AspNetCore.HealthChecks.UI.Client
-dotnet add AWMicroservices.MyProject.API package AspNetCore.HealthChecks.UI.InMemory.Storage
+dotnet add AWMicroservices.SalesOrders.API package Microsoft.Extensions.Diagnostics.HealthChecks
+dotnet add AWMicroservices.SalesOrders.API package AspNetCore.HealthChecks.SqlServer
+dotnet add AWMicroservices.SalesOrders.API package AspNetCore.HealthChecks.UI
+dotnet add AWMicroservices.SalesOrders.API package AspNetCore.HealthChecks.UI.Client
+dotnet add AWMicroservices.SalesOrders.API package AspNetCore.HealthChecks.UI.InMemory.Storage
 ```
 
 ### 12.2 — Register Health Checks in Program.cs
 
 ```csharp
-// AWMicroservices.MyProject.API/Program.cs
+// AWMicroservices.SalesOrders.API/Program.cs
 using HealthChecks.UI.Client;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 
@@ -1144,10 +1147,10 @@ app.MapHealthChecksUI(options => options.UIPath = "/health-ui");
 For checks not covered by a library (e.g., a third-party API dependency):
 
 ```csharp
-// AWMicroservices.MyProject.Infrastructure/HealthChecks/ExternalApiHealthCheck.cs
+// AWMicroservices.SalesOrders.Infrastructure/HealthChecks/ExternalApiHealthCheck.cs
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
-namespace AWMicroservices.MyProject.Infrastructure.HealthChecks;
+namespace AWMicroservices.SalesOrders.Infrastructure.HealthChecks;
 
 public class ExternalApiHealthCheck(IHttpClientFactory httpClientFactory)
     : IHealthCheck
@@ -1197,7 +1200,7 @@ Polly (via `Microsoft.Extensions.Http.Resilience`) adds retry, circuit-breaker, 
 ### 13.1 — Install NuGet Package
 
 ```bash
-dotnet add AWMicroservices.MyProject.Infrastructure package Microsoft.Extensions.Http.Resilience
+dotnet add AWMicroservices.SalesOrders.Infrastructure package Microsoft.Extensions.Http.Resilience
 ```
 
 > `Microsoft.Extensions.Http.Resilience` targets Polly v8 and integrates directly with `IHttpClientBuilder`.
@@ -1207,15 +1210,15 @@ dotnet add AWMicroservices.MyProject.Infrastructure package Microsoft.Extensions
 The standard pipeline bundles retry, circuit breaker, attempt timeout, and total request timeout with sensible defaults.
 
 ```csharp
-// AWMicroservices.MyProject.Infrastructure/DependencyInjection.cs
+// AWMicroservices.SalesOrders.Infrastructure/DependencyInjection.cs
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
-using AWMicroservices.MyProject.Domain.Interfaces;
-using AWMicroservices.MyProject.Infrastructure.Persistence;
-using AWMicroservices.MyProject.Infrastructure.Persistence.Repositories;
+using AWMicroservices.SalesOrders.Domain.Interfaces;
+using AWMicroservices.SalesOrders.Infrastructure.Persistence;
+using AWMicroservices.SalesOrders.Infrastructure.Persistence.Repositories;
 
-namespace AWMicroservices.MyProject.Infrastructure;
+namespace AWMicroservices.SalesOrders.Infrastructure;
 
 public static class DependencyInjection
 {
@@ -1274,12 +1277,12 @@ services.AddHttpClient("ExternalApiClient", client =>
 Inject `IHttpClientFactory` into any Infrastructure service that calls external APIs:
 
 ```csharp
-// AWMicroservices.MyProject.Infrastructure/Services/ExternalProductService.cs
+// AWMicroservices.SalesOrders.Infrastructure/Services/ExternalProductService.cs
 using System.Net.Http.Json;
-using AWMicroservices.MyProject.Application.Contracts;
-using AWMicroservices.MyProject.Application.Products.DTOs;
+using AWMicroservices.SalesOrders.Application.Contracts;
+using AWMicroservices.SalesOrders.Application.Products.DTOs;
 
-namespace AWMicroservices.MyProject.Infrastructure.Services;
+namespace AWMicroservices.SalesOrders.Infrastructure.Services;
 
 public class ExternalProductService(IHttpClientFactory httpClientFactory)
     : IExternalProductService
@@ -1295,10 +1298,10 @@ public class ExternalProductService(IHttpClientFactory httpClientFactory)
 Define the interface in the Application layer (it lives in `Application/Contracts/`) so Infrastructure can implement it without leaking dependencies inward:
 
 ```csharp
-// AWMicroservices.MyProject.Application/Contracts/IExternalProductService.cs
-using AWMicroservices.MyProject.Application.Products.DTOs;
+// AWMicroservices.SalesOrders.Application/Contracts/IExternalProductService.cs
+using AWMicroservices.SalesOrders.Application.Products.DTOs;
 
-namespace AWMicroservices.MyProject.Application.Contracts;
+namespace AWMicroservices.SalesOrders.Application.Contracts;
 
 public interface IExternalProductService
 {
@@ -1332,10 +1335,10 @@ Ocelot is a .NET API Gateway that acts as a single entry point for client traffi
 
 ```bash
 # Create a minimal Web API project for the gateway
-dotnet new web -n AWMicroservices.MyProject.Gateway
+dotnet new web -n AWMicroservices.SalesOrders.Gateway
 
 # Add it to the solution
-dotnet sln add AWMicroservices.MyProject.Gateway/AWMicroservices.MyProject.Gateway.csproj
+dotnet sln add AWMicroservices.SalesOrders.Gateway/AWMicroservices.SalesOrders.Gateway.csproj
 ```
 
 > The Gateway has **no references** to any other project in the solution. It only needs Ocelot and is a standalone reverse-proxy entry point.
@@ -1343,14 +1346,14 @@ dotnet sln add AWMicroservices.MyProject.Gateway/AWMicroservices.MyProject.Gatew
 ### 14.2 — Install Ocelot
 
 ```bash
-dotnet add AWMicroservices.MyProject.Gateway package Ocelot
+dotnet add AWMicroservices.SalesOrders.Gateway package Ocelot
 ```
 
 For JWT authentication forwarding also add:
 
 ```bash
-dotnet add AWMicroservices.MyProject.Gateway package Ocelot.Provider.Polly   # optional: Polly QoS in Ocelot
-dotnet add AWMicroservices.MyProject.Gateway package Microsoft.AspNetCore.Authentication.JwtBearer
+dotnet add AWMicroservices.SalesOrders.Gateway package Ocelot.Provider.Polly   # optional: Polly QoS in Ocelot
+dotnet add AWMicroservices.SalesOrders.Gateway package Microsoft.AspNetCore.Authentication.JwtBearer
 ```
 
 ### 14.3 — Create ocelot.json
@@ -1358,7 +1361,7 @@ dotnet add AWMicroservices.MyProject.Gateway package Microsoft.AspNetCore.Authen
 Define the downstream routes Ocelot will proxy. Place this file in the Gateway project root.
 
 ```json
-// AWMicroservices.MyProject.Gateway/ocelot.json
+// AWMicroservices.SalesOrders.Gateway/ocelot.json
 {
   "Routes": [
     {
@@ -1403,7 +1406,7 @@ Define the downstream routes Ocelot will proxy. Place this file in the Gateway p
 Create an environment-specific override for local development:
 
 ```json
-// AWMicroservices.MyProject.Gateway/ocelot.Development.json
+// AWMicroservices.SalesOrders.Gateway/ocelot.Development.json
 {
   "Routes": [
     {
@@ -1423,7 +1426,7 @@ Create an environment-specific override for local development:
 ### 14.4 — Configure Program.cs
 
 ```csharp
-// AWMicroservices.MyProject.Gateway/Program.cs
+// AWMicroservices.SalesOrders.Gateway/Program.cs
 using Ocelot.DependencyInjection;
 using Ocelot.Middleware;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -1459,7 +1462,7 @@ app.Run();
 ### 14.5 — Add Gateway Configuration to appsettings.json
 
 ```json
-// AWMicroservices.MyProject.Gateway/appsettings.json
+// AWMicroservices.SalesOrders.Gateway/appsettings.json
 {
   "Logging": {
     "LogLevel": {
@@ -1493,12 +1496,12 @@ Client
   │
   ▼
 ┌─────────────────────────────────────────┐
-│  AWMicroservices.MyProject.Gateway  (port 5000)   │  ← Ocelot (routing, auth, rate-limit, QoS)
+│  AWMicroservices.SalesOrders.Gateway  (port 5000)   │  ← Ocelot (routing, auth, rate-limit, QoS)
 └─────────────────────────────────────────┘
   │  /gateway/products/{id}  →  /api/products/{id}
   ▼
 ┌─────────────────────────────────────────┐
-│  AWMicroservices.MyProject.API      (port 5001)   │  ← Clean Architecture API (Controllers → MediatR)
+│  AWMicroservices.SalesOrders.API      (port 5001)   │  ← Clean Architecture API (Controllers → MediatR)
 └─────────────────────────────────────────┘
   │
   ▼
@@ -1516,8 +1519,8 @@ AWMicroservices/
 ├── AWMicroservices.sln
 ├── Scripts/
 │   └── Clear-OldLogs.ps1                                   ← added in Step 4 (Serilog cleanup)
-└── MyProject/
-    ├── AWMicroservices.MyProject.Domain/
+└── SalesOrders/
+    ├── AWMicroservices.SalesOrders.Domain/
     │   ├── Entities/
     │   │   └── Product.cs
     │   ├── Interfaces/
@@ -1526,7 +1529,7 @@ AWMicroservices/
     │   │   └── Money.cs
     │   └── Exceptions/
     │       └── NotFoundException.cs
-    ├── AWMicroservices.MyProject.Application/
+    ├── AWMicroservices.SalesOrders.Application/
     │   ├── DependencyInjection.cs
     │   ├── Contracts/
     │   │   └── IExternalProductService.cs        ← added in Step 12
@@ -1538,7 +1541,7 @@ AWMicroservices/
     │       │   └── GetProductByIdQuery.cs
     │       └── DTOs/
     │           └── ProductDto.cs
-    ├── AWMicroservices.MyProject.Infrastructure/
+    ├── AWMicroservices.SalesOrders.Infrastructure/
     │   ├── DependencyInjection.cs
     │   ├── Persistence/
     │   │   ├── AppDbContext.cs
@@ -1550,7 +1553,7 @@ AWMicroservices/
     │   │   └── ExternalProductService.cs         ← added in Step 13 (Polly HttpClient)
     │   └── HealthChecks/
     │       └── ExternalApiHealthCheck.cs
-    ├── AWMicroservices.MyProject.API/
+    ├── AWMicroservices.SalesOrders.API/
     │   ├── Program.cs
     │   ├── Controllers/
     │   │   └── ProductsController.cs
@@ -1558,7 +1561,7 @@ AWMicroservices/
     │   │   └── LoggingExtensions.cs                        ← added in Step 4 (Serilog)
     │   └── Middleware/
     │       └── ExceptionHandlingMiddleware.cs
-    └── AWMicroservices.MyProject.Gateway/                  ← added in Step 14 (Ocelot)
+    └── AWMicroservices.SalesOrders.Gateway/                  ← added in Step 14 (Ocelot)
         ├── Program.cs
         ├── ocelot.json
         └── ocelot.Development.json
