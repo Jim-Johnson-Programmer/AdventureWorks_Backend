@@ -2,6 +2,8 @@ using AWMicroservices.SalesOrders.API.Extensions;
 using Serilog;
 using AWMicroservices.SalesOrders.Application;
 using AWMicroservices.SalesOrders.Infrastructure;
+using Serilog.Core;
+
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -15,14 +17,31 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-var app = builder.Build();
-
-if (app.Environment.IsDevelopment())
+try
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
+    var app = builder.Build();
+
+    if (app.Environment.IsDevelopment())
+    {
+        app.UseSwagger();
+        app.UseSwaggerUI();
+    }
+
+    app.UseHttpsRedirection();
+    app.MapControllers();
+
+    Log.Information("Application started successfully");
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Application failed to start");
+    throw;
+}
+finally
+{
+    Log.CloseAndFlush();
 }
 
-app.UseHttpsRedirection();
-app.MapControllers();
-app.Run();
+
+
