@@ -1,5 +1,13 @@
 # Clean Architecture in .NET — Step-by-Step Guide
 
+## TODO Items to Document
+
+- Serilog enrichment for Jaeger/OpenTelemetry correlation ([YouTube Tutorial](https://www.youtube.com/watch?v=SA8BainHeS0))
+- Health checks with ASP.NET Core HealthChecks and UI
+- Docker Compose for Jaeger, Prometheus, Grafana
+- AI-assisted generation of Domain Entities, DbContext, and Repositories from SQL script
+-
+
 ## Overview
 
 Clean Architecture (by Robert C. Martin) organizes code into concentric layers where dependencies only point **inward**. The core business logic has no knowledge of infrastructure, UI, or external services.
@@ -76,11 +84,252 @@ dotnet add AWMicroservices.MyProject.API reference AWMicroservices.MyProject.Inf
 
 ---
 
-## Step 4 — Export Database Script for AI-Assisted Data Layer Generation
+## Step 4 — Add Serilog Rolling-File Logging
+
+Structured, rolling-file logging is added here — before any application code is written — so that every subsequent step benefits from logs from day one. The setup uses a logging abstraction extension method, making it trivial to swap sinks (console, Seq, Elasticsearch, Application Insights, etc.) without touching `Program.cs`.
+
+### 4.1 — Install NuGet Packages
+
+Add Serilog packages to the **API** project:
+
+```bash
+dotnet add AWMicroservices.MyProject.API package Serilog.AspNetCore
+dotnet add AWMicroservices.MyProject.API package Serilog.Sinks.File
+dotnet add AWMicroservices.MyProject.API package Serilog.Formatting.Compact
+```
+
+> `Serilog.AspNetCore` pulls in the core Serilog library and the `UseSerilog` host integration.  
+> `Serilog.Sinks.File` provides rolling-file support.  
+> `Serilog.Formatting.Compact` writes structured JSON logs that are easy to query with tools like Seq or jq.
+
+### 4.2 — Create a Logging Extension Method
+
+Encapsulating the Serilog configuration in an extension method means you can swap sinks later by changing only this file.
+
+```csharp
+// AWMicroservices.MyProject.API/Extensions/LoggingExtensions.cs
+using Serilog;
+using Serilog.Formatting.Compact;
+
+namespace AWMicroservices.MyProject.API.Extensions;
+
+public static class LoggingExtensions
+{
+    /// <summary>
+    /// Registers Serilog as the application logger.
+
+    /// Swap or add sinks here without touching Program.cs.
+
+    /// </summary>
+    public static IHostBuilder AddSerilogLogging(this IHostBuilder hostBuilder)
+    {
+        return hostBuilder.UseSerilog((context, services, config) =>
+        {
+            var logDir = Path.Combine(AppContext.BaseDirectory, "logs");
+            Directory.CreateDirectory(logDir);
+
+            config
+                .ReadFrom.Configuration(context.Configuration)   // honours appsettings overrides
+                .ReadFrom.Services(services)                      // allows injected enrichers
+                .Enrich.FromLogContext()
+                .Enrich.WithEnvironmentName()
+                .Enrich.WithMachineName()
+                // ── File sink — new file each day, kept for 30 days ────────────
+                .WriteTo.File(
+                    formatter: new CompactJsonFormatter(),
+                    path: Path.Combine(logDir, "log-.json"),
+                    rollingInterval: RollingInterval.Day,
+                    retainedFileCountLimit: 30,
+                    shared: false)
+                // ── Console sink (structured during development) ───────────────
+                .WriteTo.Console(outputTemplate:
+                    "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj} {Properties:j}{NewLine}{Exception}");
+        });
+    }
+}
+```
+
+**Why `AddSerilogLogging` as a `IHostBuilder` extension?**  
+Serilog must replace the default logging provider at host-builder time, before the DI container is built. Putting the call in an extension method keeps `Program.cs` clean and makes adding or removing sinks a one-file change.
+
+### 4.3 — Wire Serilog into Program.cs
+
+```csharp
+// AWMicroservices.MyProject.API/Program.cs
+using AWMicroservices.MyProject.API.Extensions;
+using Serilog;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// ── Logging — must be first so every subsequent registration is captured ──
+builder.Host.AddSerilogLogging();
+
+// ... remaining service registrations ...
+
+var app = builder.Build();
+
+// ── Log HTTP request/response details automatically ───────────────────────
+app.UseSerilogRequestLogging();
+
+// ... remaining middleware ...
+
+app.Run();
+```
+
+### 4.4 — Appsettings Configuration
+
+Override minimum levels per namespace in `appsettings.json` without touching code:
+
+```json
+// AWMicroservices.MyProject.API/appsettings.json  (add to existing file)
+{
+  "Serilog": {
+    "MinimumLevel": {
+      "Default": "Information",
+      "Override": {
+        "Microsoft": "Warning",
+        "Microsoft.Hosting.Lifetime": "Information",
+        "System": "Warning"
+      }
+    }
+  }
+}
+```
+
+Development override (`appsettings.Development.json`):
+
+```json
+{
+  "Serilog": {
+    "MinimumLevel": {
+      "Default": "Debug",
+      "Override": {
+        "Microsoft.EntityFrameworkCore.Database.Command": "Information"
+      }
+    }
+  }
+}
+```
+
+### 4.5 — Log File Location and Naming
+
+| Setting               | Value                                       |
+| --------------------- | ------------------------------------------- |
+| **Base directory**    | `<output dir>/logs/`                        |
+| **File name pattern** | `log-20260509.json`, `log-20260510.json`, … |
+| **Roll interval**     | Daily — a new file starts at midnight       |
+| **Retention**         | 30 files (≈ 30 days)                        |
+| **Format**            | Compact JSON (one JSON object per line)     |
+
+The log directory is created automatically on first run. The path is relative to the application's output directory, so it works the same in development, CI, and Docker containers.
+
+### 4.6 — Log Cleanup Script
+
+Run this PowerShell script manually or on a schedule to remove log files older than 30 days from any directory passed as an argument (defaults to `./logs`):
+
+```powershell
+# Scripts/Clear-OldLogs.ps1
+<#
+.SYNOPSIS
+    Deletes Serilog log files older than the specified retention period.
+
+.PARAMETER LogDirectory
+    Path to the folder containing log files. Defaults to .\logs relative to the script location.
+
+.PARAMETER RetentionDays
+    Number of days to retain log files. Defaults to 30.
+
+.EXAMPLE
+    .\Clear-OldLogs.ps1
+    .\Clear-OldLogs.ps1 -LogDirectory "C:\App\logs" -RetentionDays 14
+#>
+param(
+    [string]$LogDirectory  = (Join-Path $PSScriptRoot "..\logs"),
+    [int]   $RetentionDays = 30
+)
+
+$logPath  = Resolve-Path $LogDirectory -ErrorAction SilentlyContinue
+if (-not $logPath) {
+    Write-Warning "Log directory not found: $LogDirectory"
+    exit 0
+}
+
+$cutoff   = (Get-Date).AddDays(-$RetentionDays)
+$deleted  = 0
+
+Get-ChildItem -Path $logPath -Filter "log-*.json" -File |
+    Where-Object { $_.LastWriteTime -lt $cutoff } |
+    ForEach-Object {
+        Remove-Item $_.FullName -Force
+        Write-Host "Deleted: $($_.Name)"
+        $deleted++
+    }
+
+Write-Host "`nCleanup complete. $deleted file(s) removed."
+```
+
+Place the script in a `Scripts/` folder at the solution root and run it from a scheduled task, CI pipeline, or manually.
+
+### 4.7 — Swapping Sinks Later
+
+To add or replace a sink, only `LoggingExtensions.cs` needs to change. Examples:
+
+| Sink              | Package                             | Replace / Add in `AddSerilogLogging`                                       |
+| ----------------- | ----------------------------------- | -------------------------------------------------------------------------- |
+| **Seq**           | `Serilog.Sinks.Seq`                 | `.WriteTo.Seq(seqUrl)`                                                     |
+| **App Insights**  | `Serilog.Sinks.ApplicationInsights` | `.WriteTo.ApplicationInsights(telemetryClient, TelemetryConverter.Traces)` |
+| **Console only**  | _(built-in)_                        | Remove `.WriteTo.File(...)` line                                           |
+| **Elasticsearch** | `Serilog.Sinks.Elasticsearch`       | `.WriteTo.Elasticsearch(new ElasticsearchSinkOptions(new Uri(esUrl)))`     |
+
+No changes to `Program.cs` or any other file are required.
+
+---
+
+## Step 5 — Add Swagger/OpenAPI for API Documentation
+
+Adding Swagger to your Clean Architecture project provides interactive API documentation and testing UI. This is essential for both development and client integration.
+
+### 5.1 — Install Swagger NuGet Package
+
+Add the Swagger generator package to the **API** project:
+
+```bash
+dotnet add AWMicroservices.MyProject.API package Swashbuckle.AspNetCore
+```
+
+### 5.2 — Register Swagger Services
+
+In `Program.cs`, register Swagger services:
+
+```csharp
+// AWMicroservices.MyProject.API/Program.cs
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+```
+
+### 5.3 — Enable Swagger Middleware
+
+Still in `Program.cs`, enable Swagger and Swagger UI in the development environment:
+
+```csharp
+if (app.Environment.IsDevelopment())
+{
+        app.UseSwagger();
+        app.UseSwaggerUI();
+}
+```
+
+### 5.4 — Test the Swagger UI
+
+Run the API project and navigate to `https://localhost:<port>/swagger` to view and interact with the API documentation.
+
+---
+
+## Step 6 — Export Database Script for AI-Assisted Data Layer Generation
 
 Before writing any code, export a full database script from the existing SQL Server database. This script is provided to an AI tool to generate the **Domain Entities**, **DbContext**, **Fluent API configurations**, and **Repository** implementations that the remaining steps build upon.
 
-### 4.1 — Generate the Script in SSMS
+### 6.1 — Generate the Script in SSMS
 
 1. In **SQL Server Management Studio (SSMS)**, open **Object Explorer**.
 2. Right-click the target database (e.g., `AdventureWorks`).
@@ -93,7 +342,7 @@ Before writing any code, export a full database script from the existing SQL Ser
      - **Include descriptive headers:** `True`
 5. Save the output as a single `.sql` file (e.g., `AdventureWorks_FullScript.sql`).
 
-### 4.2 — Use the Script with AI to Generate the Data Layer
+### 6.2 — Use the Script with AI to Generate the Data Layer
 
 Provide the exported `.sql` file to an AI tool (e.g., GitHub Copilot, ChatGPT) with a prompt such as:
 
@@ -112,13 +361,20 @@ The AI will produce:
 
 ---
 
-## Step 5 — Define the Domain Layer
+## Step 7 — Define the Domain Layer
 
 The Domain layer contains **pure business logic** with no external dependencies.
 
-### 5.1 — Entities
+### 7.1 — Install Entity Framework Core (for Infrastructure Layer)
 
-For this project, we have imported all relevant entities from the AdventureWorks database using AI-assisted generation based on the exported SQL script (see Step 4.2). The entities are placed in the `Domain/Entities/` folder, following Clean Architecture principles with private setters, guard clauses, and EF Core compatibility.
+```bash
+dotnet add AWMicroservices.MyProject.Infrastructure package Microsoft.EntityFrameworkCore.SqlServer
+dotnet add AWMicroservices.MyProject.Infrastructure package Microsoft.EntityFrameworkCore.Tools
+```
+
+### 7.2 — Entities
+
+For this project, we have imported all relevant entities from the AdventureWorks database using AI-assisted generation based on the exported SQL script (see Step 5.2). The entities are placed in the `Domain/Entities/` folder, following Clean Architecture principles with private setters, guard clauses, and EF Core compatibility.
 
 ```csharp
 // Example: AWMicroservices.MyProject.Domain/Entities/Product.cs (AI-generated from SQL script)
@@ -190,16 +446,9 @@ public class Product
 }
 ```
 
-### 5.1.1 — Install Entity Framework Core (for Infrastructure Layer)
+### 7.3 — Repository Interfaces
 
-```bash
-dotnet add AWMicroservices.MyProject.Infrastructure package Microsoft.EntityFrameworkCore.SqlServer
-dotnet add AWMicroservices.MyProject.Infrastructure package Microsoft.EntityFrameworkCore.Tools
-```
-
-### 5.2 — Repository Interfaces
-
-For this project, we have generated all repository interfaces for the imported entities using AI-assisted generation based on the entities and SQL script (see Step 4.2). The interfaces are placed in the `Domain/Interfaces/` folder.
+For this project, we have generated all repository interfaces for the imported entities using AI-assisted generation based on the entities and SQL script (see Step 5.2). The interfaces are placed in the `Domain/Interfaces/` folder.
 
 ```csharp
 // Example: AWMicroservices.MyProject.Domain/Interfaces/IProductRepository.cs (AI-generated from entities and SQL script)
@@ -215,7 +464,7 @@ public interface IProductRepository
 }
 ```
 
-### 5.3 — Value Objects (optional but recommended)
+### 7.4 — Value Objects (optional but recommended)
 
 ```csharp
 // AWMicroservices.MyProject.Domain/ValueObjects/Money.cs
@@ -227,7 +476,7 @@ public record Money(decimal Amount, string Currency)
 }
 ```
 
-### 5.4 — Domain Exceptions
+### 7.5 — Domain Exceptions
 
 ```csharp
 // AWMicroservices.MyProject.Domain/Exceptions/NotFoundException.cs
@@ -239,18 +488,18 @@ public class NotFoundException(string entityName, object key)
 
 ---
 
-## Step 6 — Define the Application Layer
+## Step 8 — Define the Application Layer
 
 The Application layer contains **use cases** (business workflows). It depends only on Domain.
 
-### 6.1 — Install MediatR
+### 8.1 — Install MediatR
 
 ```bash
 dotnet add AWMicroservices.MyProject.Application package MediatR
 dotnet add AWMicroservices.MyProject.Application package FluentValidation
 ```
 
-### 6.2 — DTOs
+### 8.2 — DTOs
 
 ```csharp
 // AWMicroservices.MyProject.Application/Products/DTOs/ProductDto.cs
@@ -259,7 +508,7 @@ namespace AWMicroservices.MyProject.Application.Products.DTOs;
 public record ProductDto(int Id, string Name, decimal Price);
 ```
 
-### 6.3 — CQRS Queries
+### 8.3 — CQRS Queries
 
 ```csharp
 // AWMicroservices.MyProject.Application/Products/Queries/GetProductByIdQuery.cs
@@ -282,7 +531,7 @@ public class GetProductByIdHandler(IProductRepository repository)
 }
 ```
 
-### 6.4 — CQRS Commands
+### 8.4 — CQRS Commands
 
 ```csharp
 // AWMicroservices.MyProject.Application/Products/Commands/CreateProductCommand.cs
@@ -304,7 +553,7 @@ public class CreateProductHandler(IProductRepository repository)
 }
 ```
 
-### 6.5 — Validation with FluentValidation
+### 8.5 — Validation with FluentValidation
 
 ```csharp
 // AWMicroservices.MyProject.Application/Products/Commands/CreateProductCommandValidator.cs
@@ -322,7 +571,7 @@ public class CreateProductCommandValidator : AbstractValidator<CreateProductComm
 }
 ```
 
-### 6.6 — Register Application Services
+### 8.6 — Register Application Services
 
 ```csharp
 // AWMicroservices.MyProject.Application/DependencyInjection.cs
@@ -345,11 +594,11 @@ public static class DependencyInjection
 
 ---
 
-## Step 7 — Implement the Infrastructure Layer
+## Step 9 — Implement the Infrastructure Layer
 
 The Infrastructure layer implements interfaces defined in Domain/Application.
 
-### 7.1 — DbContext
+### 9.1 — DbContext
 
 ```csharp
 // AWMicroservices.MyProject.Infrastructure/Persistence/AppDbContext.cs
@@ -369,7 +618,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 }
 ```
 
-### 7.2 — Entity Configuration
+### 9.2 — Entity Configuration
 
 ```csharp
 // AWMicroservices.MyProject.Infrastructure/Persistence/Configurations/ProductConfiguration.cs
@@ -390,7 +639,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 }
 ```
 
-### 7.3 — Repository Implementation
+### 9.3 — Repository Implementation
 
 ```csharp
 // AWMicroservices.MyProject.Infrastructure/Persistence/Repositories/ProductRepository.cs
@@ -432,7 +681,7 @@ public class ProductRepository(AppDbContext context) : IProductRepository
 }
 ```
 
-### 7.4 — Register Infrastructure Services
+### 9.4 — Register Infrastructure Services
 
 ```csharp
 // AWMicroservices.MyProject.Infrastructure/DependencyInjection.cs
@@ -463,9 +712,9 @@ public static class DependencyInjection
 
 ---
 
-## Step 8 — Implement the Presentation (API) Layer
+## Step 10 — Implement the Presentation (API) Layer
 
-### 8.1 — Wire Up DI in Program.cs
+### 10.1 — Wire Up DI in Program.cs
 
 ```csharp
 // AWMicroservices.MyProject.API/Program.cs
@@ -493,7 +742,7 @@ app.MapControllers();
 app.Run();
 ```
 
-### 8.2 — Controller
+### 9.2 — Controller
 
 ```csharp
 // AWMicroservices.MyProject.API/Controllers/ProductsController.cs
@@ -524,7 +773,7 @@ public class ProductsController(IMediator mediator) : ControllerBase
 }
 ```
 
-### 8.3 — Global Exception Handling (optional but recommended)
+### 9.3 — Global Exception Handling (optional but recommended)
 
 ```csharp
 // AWMicroservices.MyProject.API/Middleware/ExceptionHandlingMiddleware.cs
@@ -564,7 +813,7 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 ---
 
-## Step 9 — Apply EF Core Migrations
+## Step 10 — Apply EF Core Migrations
 
 Once all AI-generated and hand-crafted code from the previous steps has been reviewed and placed in the correct projects:
 
@@ -582,7 +831,7 @@ dotnet ef database update --project ../AWMicroservices.MyProject.Infrastructure 
 
 ---
 
-## Step 10 — Add Observability: Tracing (Jaeger), Metrics (Prometheus), and Dashboards (Grafana)
+## Step 11 — Add Observability: Tracing (Jaeger), Metrics (Prometheus), and Dashboards (Grafana)
 
 The three pillars of observability each address a different question:
 
@@ -594,7 +843,7 @@ The three pillars of observability each address a different question:
 
 All three are wired through the **OpenTelemetry** SDK so the application code is vendor-neutral.
 
-### 10.1 — Install NuGet Packages
+### 11.1 — Install NuGet Packages
 
 Add OpenTelemetry packages to the **API** project (and optionally Infrastructure for DB tracing):
 
@@ -612,7 +861,7 @@ dotnet add AWMicroservices.MyProject.API package OpenTelemetry.Exporter.OpenTele
 dotnet add AWMicroservices.MyProject.API package OpenTelemetry.Exporter.Prometheus.AspNetCore --prerelease
 ```
 
-### 10.2 — Configure OpenTelemetry in Program.cs
+### 11.2 — Configure OpenTelemetry in Program.cs
 
 ```csharp
 // AWMicroservices.MyProject.API/Program.cs
@@ -657,7 +906,7 @@ Map the `/metrics` scrape endpoint in the middleware pipeline (after `app.UseHtt
 app.MapPrometheusScrapingEndpoint(); // default path: /metrics
 ```
 
-### 10.3 — Add Configuration to appsettings.json
+### 11.3 — Add Configuration to appsettings.json
 
 ```json
 // AWMicroservices.MyProject.API/appsettings.json
@@ -679,7 +928,7 @@ Override for local development in `appsettings.Development.json`:
 }
 ```
 
-### 10.4 — Run Jaeger Locally with Docker
+### 11.4 — Run Jaeger Locally with Docker
 
 ```bash
 docker run -d --name jaeger \
@@ -697,7 +946,7 @@ docker run -d --name jaeger \
 
 Open the Jaeger UI at `http://localhost:16686` after starting the application.
 
-### 10.5 — Run Prometheus and Grafana Locally with Docker Compose
+### 11.5 — Run Prometheus and Grafana Locally with Docker Compose
 
 Create `docker-compose.observability.yml` in the solution root:
 
@@ -757,7 +1006,7 @@ docker compose -f docker-compose.observability.yml up -d
 | `http://localhost:9090` | Prometheus query UI               |
 | `http://localhost:3000` | Grafana dashboard (admin / admin) |
 
-### 10.6 — Configure Grafana to Use Prometheus as a Data Source
+### 11.6 — Configure Grafana to Use Prometheus as a Data Source
 
 1. Open Grafana at `http://localhost:3000` and log in (admin / admin).
 2. Go to **Connections → Data Sources → Add data source**.
@@ -771,7 +1020,7 @@ To add a pre-built ASP.NET Core dashboard:
 2. Enter dashboard ID **`19924`** (ASP.NET Core — OpenTelemetry) from grafana.com.
 3. Select the Prometheus data source and click **Import**.
 
-### 10.7 — Add Custom Spans in Application Code (Optional)
+### 11.7 — Add Custom Spans in Application Code (Optional)
 
 Inject `ActivitySource` to create custom trace spans inside use-case handlers:
 
@@ -815,15 +1064,15 @@ Register the `ActivitySource` in the Application `DependencyInjection.cs`:
 services.AddSingleton(AppActivitySource.Instance);
 ```
 
-The `.AddSource(AppActivitySource.Instance.Name)` call in Step 10.2 already connects it to the OpenTelemetry tracing pipeline.
+The `.AddSource(AppActivitySource.Instance.Name)` call in Step 11.2 already connects it to the OpenTelemetry tracing pipeline.
 
 ---
 
-## Step 11 — Add Health Checks
+## Step 12 — Add Health Checks
 
 Health checks expose HTTP endpoints that monitoring systems, container orchestrators (Kubernetes, Docker), and load balancers can poll to determine whether the application is alive and ready to serve traffic.
 
-### 11.1 — Install NuGet Packages
+### 12.1 — Install NuGet Packages
 
 ```bash
 dotnet add AWMicroservices.MyProject.API package Microsoft.Extensions.Diagnostics.HealthChecks
@@ -833,7 +1082,7 @@ dotnet add AWMicroservices.MyProject.API package AspNetCore.HealthChecks.UI.Clie
 dotnet add AWMicroservices.MyProject.API package AspNetCore.HealthChecks.UI.InMemory.Storage
 ```
 
-### 11.2 — Register Health Checks in Program.cs
+### 12.2 — Register Health Checks in Program.cs
 
 ```csharp
 // AWMicroservices.MyProject.API/Program.cs
@@ -861,7 +1110,7 @@ builder.Services
     .AddInMemoryStorage();
 ```
 
-### 11.3 — Map Health Check Endpoints
+### 12.3 — Map Health Check Endpoints
 
 Add the following after `app.UseHttpsRedirection()` and before `app.MapControllers()` in `Program.cs`:
 
@@ -890,7 +1139,7 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 app.MapHealthChecksUI(options => options.UIPath = "/health-ui");
 ```
 
-### 11.4 — Add a Custom Health Check (Optional)
+### 12.4 — Add a Custom Health Check (Optional)
 
 For checks not covered by a library (e.g., a third-party API dependency):
 
@@ -930,7 +1179,7 @@ services.AddHealthChecks()
     .AddCheck<ExternalApiHealthCheck>("external-api", tags: ["external", "ready"]);
 ```
 
-### 11.5 — Health Check Endpoints Reference
+### 12.5 — Health Check Endpoints Reference
 
 | Endpoint        | Purpose                                        |
 | --------------- | ---------------------------------------------- |
@@ -941,11 +1190,11 @@ services.AddHealthChecks()
 
 ---
 
-## Step 12 — Add Resilience with Polly
+## Step 13 — Add Resilience with Polly
 
 Polly (via `Microsoft.Extensions.Http.Resilience`) adds retry, circuit-breaker, timeout, and hedging policies to outbound `HttpClient` calls made from the Infrastructure layer. In .NET 8+ the recommended entry point is the built-in resilience pipeline; raw Polly policies are still available for fine-grained control.
 
-### 12.1 — Install NuGet Package
+### 13.1 — Install NuGet Package
 
 ```bash
 dotnet add AWMicroservices.MyProject.Infrastructure package Microsoft.Extensions.Http.Resilience
@@ -953,7 +1202,7 @@ dotnet add AWMicroservices.MyProject.Infrastructure package Microsoft.Extensions
 
 > `Microsoft.Extensions.Http.Resilience` targets Polly v8 and integrates directly with `IHttpClientBuilder`.
 
-### 12.2 — Add a Standard Resilience Pipeline (Recommended)
+### 13.2 — Add a Standard Resilience Pipeline (Recommended)
 
 The standard pipeline bundles retry, circuit breaker, attempt timeout, and total request timeout with sensible defaults.
 
@@ -993,7 +1242,7 @@ public static class DependencyInjection
 }
 ```
 
-### 12.3 — Customise the Resilience Pipeline (Optional)
+### 13.3 — Customise the Resilience Pipeline (Optional)
 
 Override individual pipeline options when the defaults do not fit:
 
@@ -1020,7 +1269,7 @@ services.AddHttpClient("ExternalApiClient", client =>
     });
 ```
 
-### 12.4 — Consume the HttpClient in a Service
+### 13.4 — Consume the HttpClient in a Service
 
 Inject `IHttpClientFactory` into any Infrastructure service that calls external APIs:
 
@@ -1063,7 +1312,7 @@ Register the service in `Infrastructure/DependencyInjection.cs`:
 services.AddScoped<IExternalProductService, ExternalProductService>();
 ```
 
-### 12.5 — Polly Policy Summary
+### 13.5 — Polly Policy Summary
 
 | Policy              | Default Behaviour (Standard Pipeline)                         |
 | ------------------- | ------------------------------------------------------------- |
@@ -1075,11 +1324,11 @@ services.AddScoped<IExternalProductService, ExternalProductService>();
 
 ---
 
-## Step 13 — Add an Ocelot API Gateway
+## Step 14 — Add an Ocelot API Gateway
 
 Ocelot is a .NET API Gateway that acts as a single entry point for client traffic. It routes requests to the appropriate downstream microservices, handles authentication, rate-limiting, load balancing, and more — without clients needing to know individual service addresses.
 
-### 13.1 — Create the Gateway Project
+### 14.1 — Create the Gateway Project
 
 ```bash
 # Create a minimal Web API project for the gateway
@@ -1091,7 +1340,7 @@ dotnet sln add AWMicroservices.MyProject.Gateway/AWMicroservices.MyProject.Gatew
 
 > The Gateway has **no references** to any other project in the solution. It only needs Ocelot and is a standalone reverse-proxy entry point.
 
-### 13.2 — Install Ocelot
+### 14.2 — Install Ocelot
 
 ```bash
 dotnet add AWMicroservices.MyProject.Gateway package Ocelot
@@ -1104,7 +1353,7 @@ dotnet add AWMicroservices.MyProject.Gateway package Ocelot.Provider.Polly   # o
 dotnet add AWMicroservices.MyProject.Gateway package Microsoft.AspNetCore.Authentication.JwtBearer
 ```
 
-### 13.3 — Create ocelot.json
+### 14.3 — Create ocelot.json
 
 Define the downstream routes Ocelot will proxy. Place this file in the Gateway project root.
 
@@ -1171,7 +1420,7 @@ Create an environment-specific override for local development:
 }
 ```
 
-### 13.4 — Configure Program.cs
+### 14.4 — Configure Program.cs
 
 ```csharp
 // AWMicroservices.MyProject.Gateway/Program.cs
@@ -1207,7 +1456,7 @@ await app.UseOcelot();
 app.Run();
 ```
 
-### 13.5 — Add Gateway Configuration to appsettings.json
+### 14.5 — Add Gateway Configuration to appsettings.json
 
 ```json
 // AWMicroservices.MyProject.Gateway/appsettings.json
@@ -1226,10 +1475,10 @@ app.Run();
 }
 ```
 
-### 13.6 — Register the Gateway in the Solution
+### 14.6 — Register the Gateway in the Solution
 
 ```bash
-# The gateway project is already added to the solution (Step 13.1).
+# The gateway project is already added to the solution (Step 14.1).
 # To run it together with the API during development, use a launch profile
 # or the .NET Aspire orchestration (if applicable).
 
@@ -1237,7 +1486,7 @@ app.Run();
 dotnet sln list
 ```
 
-### 13.7 — Gateway Architecture Overview
+### 14.7 — Gateway Architecture Overview
 
 ```
 Client
@@ -1265,6 +1514,8 @@ Client
 ```
 AWMicroservices/
 ├── AWMicroservices.sln
+├── Scripts/
+│   └── Clear-OldLogs.ps1                                   ← added in Step 4 (Serilog cleanup)
 └── MyProject/
     ├── AWMicroservices.MyProject.Domain/
     │   ├── Entities/
@@ -1296,16 +1547,18 @@ AWMicroservices/
     │   │   └── Repositories/
     │   │       └── ProductRepository.cs
     │   ├── Services/
-    │   │   └── ExternalProductService.cs         ← added in Step 12 (Polly HttpClient)
+    │   │   └── ExternalProductService.cs         ← added in Step 13 (Polly HttpClient)
     │   └── HealthChecks/
     │       └── ExternalApiHealthCheck.cs
     ├── AWMicroservices.MyProject.API/
     │   ├── Program.cs
     │   ├── Controllers/
     │   │   └── ProductsController.cs
+    │   ├── Extensions/
+    │   │   └── LoggingExtensions.cs                        ← added in Step 4 (Serilog)
     │   └── Middleware/
     │       └── ExceptionHandlingMiddleware.cs
-    └── AWMicroservices.MyProject.Gateway/                  ← added in Step 13 (Ocelot)
+    └── AWMicroservices.MyProject.Gateway/                  ← added in Step 14 (Ocelot)
         ├── Program.cs
         ├── ocelot.json
         └── ocelot.Development.json
