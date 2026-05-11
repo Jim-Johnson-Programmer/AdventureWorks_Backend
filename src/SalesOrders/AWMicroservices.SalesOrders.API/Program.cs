@@ -1,7 +1,13 @@
+using AWMicroservices.SalesOrders.API.Extensions;
+using Serilog;
 using AWMicroservices.SalesOrders.Application;
 using AWMicroservices.SalesOrders.Infrastructure;
 
+
 var builder = WebApplication.CreateBuilder(args);
+
+// Register Serilog logging as early as possible
+builder.Host.AddSerilogLogging();
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
