@@ -33,7 +33,7 @@ Clean Architecture (by Robert C. Martin) organizes code into concentric layers w
 
 ## Step 1 — Create the Solution Structure
 
-From your workspace root, create the solution and standard subdirectories:
+From your workspace root, create the solution and standard subdirectories (please note for multiple api projects, the `src` structure would be `src/SalesOrders/`, `src/Customers/`, etc.):
 
 ```bash
 mkdir -p docs src tests
@@ -95,9 +95,9 @@ Structured, rolling-file logging is added here — before any application code i
 Add Serilog packages to the **API** project (from the workspace root):
 
 ```bash
-dotnet add src/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.AspNetCore
-dotnet add src/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.Sinks.File
-dotnet add src/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.Formatting.Compact
+dotnet add src/SalesOrders/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.AspNetCore
+dotnet add src/SalesOrders/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.Sinks.File
+dotnet add src/SalesOrders/AWMicroservices.SalesOrders.API/AWMicroservices.SalesOrders.API.csproj package Serilog.Formatting.Compact
 ```
 
 > `Serilog.AspNetCore` pulls in the core Serilog library and the `UseSerilog` host integration.  
