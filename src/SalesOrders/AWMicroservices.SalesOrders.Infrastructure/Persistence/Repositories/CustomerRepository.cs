@@ -19,10 +19,14 @@ public class CustomerRepository : ICustomerRepository
   public async Task<Customer?> GetByIdAsync(int customerID, CancellationToken cancellationToken = default)
       => await context.Customers.FirstOrDefaultAsync(c => c.CustomerID == customerID, cancellationToken);
 
-  public async Task<IEnumerable<Customer>> GetAllAsync(CancellationToken cancellationToken = default)
+  public async Task<IEnumerable<Customer>> GetAllAsync(int pageNumber, int pageSize, CancellationToken cancellationToken = default)
   {
-    this.logger.LogInformation("Retrieving all customers from database");
-    return await context.Customers.ToListAsync(cancellationToken);
+    logger.LogDebug($"Retrieving customers page {pageNumber} with size {pageSize}");
+    return await context.Customers
+      .OrderBy(c => c.CustomerID)
+      .Skip((pageNumber - 1) * pageSize)
+      .Take(pageSize)
+      .ToListAsync(cancellationToken);
   }
 
   public async Task AddAsync(Customer customer, CancellationToken cancellationToken = default)
@@ -45,5 +49,40 @@ public class CustomerRepository : ICustomerRepository
       context.Customers.Remove(customer);
       await context.SaveChangesAsync(cancellationToken);
     }
+  }
+
+  public async Task<(IEnumerable<Customer> Items, int TotalCount)> GetPagedAsync(int pageNumber, int pageSize, string? sortBy = null, string? sortDirection = null, CancellationToken cancellationToken = default)
+  {
+    logger.LogInformation($"Retrieving customers page {pageNumber} with size {pageSize}, sortBy: {sortBy}, sortDirection: {sortDirection}");
+    var query = context.Customers.AsQueryable();
+
+    // Sorting
+    if (!string.IsNullOrEmpty(sortBy))
+    {
+      // Only allow known columns for sorting
+      switch (sortBy.ToLower())
+      {
+        case "customerid":
+          query = sortDirection == "desc" ? query.OrderByDescending(c => c.CustomerID) : query.OrderBy(c => c.CustomerID);
+          break;
+        case "accountnumber":
+          query = sortDirection == "desc" ? query.OrderByDescending(c => c.AccountNumber) : query.OrderBy(c => c.AccountNumber);
+          break;
+        case "modifieddate":
+          query = sortDirection == "desc" ? query.OrderByDescending(c => c.ModifiedDate) : query.OrderBy(c => c.ModifiedDate);
+          break;
+        default:
+          query = query.OrderBy(c => c.CustomerID);
+          break;
+      }
+    }
+    else
+    {
+      query = query.OrderBy(c => c.CustomerID);
+    }
+
+    var totalCount = await query.CountAsync(cancellationToken);
+    var items = await query.Skip((pageNumber - 1) * pageSize).Take(pageSize).ToListAsync(cancellationToken);
+    return (items, totalCount);
   }
 }

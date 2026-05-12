@@ -4,8 +4,6 @@ using AWMicroservices.SalesOrders.Application.SalesOrders.DTOs;
 using AWMicroservices.SalesOrders.Application.SalesOrders.Queries;
 using AWMicroservices.SalesOrders.Application.SalesOrders.Commands;
 
-
-
 namespace AWMicroservices.SalesOrders.API.Controllers;
 
 [ApiController]
@@ -24,12 +22,12 @@ public class CustomersController : ControllerBase
 
 
   [HttpGet]
-  public async Task<ActionResult<IEnumerable<CustomerDto>>> GetAll()
+  public async Task<ActionResult<IEnumerable<CustomerDto>>> GetAll([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 20)
   {
     try
     {
       _logger.LogInformation("Getting all customers");
-      var result = await _mediator.Send(new GetAllCustomersQuery());
+      var result = await _mediator.Send(new GetAllCustomersQuery(pageNumber, pageSize));
       return Ok(result);
     }
     catch (System.Exception ex)
@@ -52,6 +50,28 @@ public class CustomersController : ControllerBase
       return NotFound();
     }
     return Ok(result);
+  }
+
+
+  [HttpGet("paged")]
+  [ProducesResponseType(typeof(PagedResult<CustomerDto>), 200)]
+  public async Task<ActionResult<PagedResult<CustomerDto>>> GetPaged(
+    [FromQuery] int pageNumber = 1,
+    [FromQuery] int pageSize = 50,
+    [FromQuery] string? sortBy = null,
+    [FromQuery] string? sortDirection = null)
+  {
+    try
+    {
+      _logger.LogInformation("Getting paged customers: page {PageNumber}, size {PageSize}, sortBy: {SortBy}, sortDirection: {SortDirection}", pageNumber, pageSize, sortBy, sortDirection);
+      var result = await _mediator.Send(new GetPagedCustomersQuery(pageNumber, pageSize, sortBy, sortDirection));
+      return Ok(result);
+    }
+    catch (System.Exception ex)
+    {
+      _logger.LogError(ex, "An error occurred while getting paged customers");
+      return StatusCode(500, "An error occurred while processing your request.");
+    }
   }
 
 

@@ -18,10 +18,10 @@ public class GetAllCustomersHandler : IRequestHandler<GetAllCustomersQuery, IEnu
 
   public async Task<IEnumerable<CustomerDto>> Handle(GetAllCustomersQuery request, CancellationToken cancellationToken)
   {
-    this.logger.LogInformation("Handling GetAllCustomersQuery");
-    var customers = await repository.GetAllAsync(cancellationToken);
+    this.logger.LogInformation("Mediatr Handler for GetAllCustomersQuery");
+    var customers = await repository.GetAllAsync(request.PageNumber, request.PageSize, cancellationToken);
 
-    this.logger.LogInformation("Retrieved {CustomerCount} customers from repository", customers.Count());
+    this.logger.LogDebug("Retrieved {CustomerCount} customers from repository", customers.Count());
     return customers.Select(customer => new CustomerDto(
         customer.CustomerID,
         customer.PersonID,
