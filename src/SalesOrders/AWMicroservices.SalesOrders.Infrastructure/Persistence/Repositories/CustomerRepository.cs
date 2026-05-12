@@ -1,16 +1,29 @@
 using Microsoft.EntityFrameworkCore;
 using AWMicroservices.SalesOrders.Domain.Entities;
 using AWMicroservices.SalesOrders.Domain.Interfaces;
+using Microsoft.Extensions.Logging;
 
 namespace AWMicroservices.SalesOrders.Infrastructure.Persistence.Repositories;
 
-public class CustomerRepository(AppDbContext context) : ICustomerRepository
+public class CustomerRepository : ICustomerRepository
 {
+  private readonly AppDbContext context;
+  private readonly ILogger<CustomerRepository> logger;
+
+  public CustomerRepository(AppDbContext context, ILogger<CustomerRepository> logger)
+  {
+    this.context = context;
+    this.logger = logger;
+  }
+
   public async Task<Customer?> GetByIdAsync(int customerID, CancellationToken cancellationToken = default)
       => await context.Customers.FirstOrDefaultAsync(c => c.CustomerID == customerID, cancellationToken);
 
   public async Task<IEnumerable<Customer>> GetAllAsync(CancellationToken cancellationToken = default)
-      => await context.Customers.ToListAsync(cancellationToken);
+  {
+    this.logger.LogInformation("Retrieving all customers from database");
+    return await context.Customers.ToListAsync(cancellationToken);
+  }
 
   public async Task AddAsync(Customer customer, CancellationToken cancellationToken = default)
   {

@@ -26,9 +26,18 @@ public class CustomersController : ControllerBase
   [HttpGet]
   public async Task<ActionResult<IEnumerable<CustomerDto>>> GetAll()
   {
-    _logger.LogInformation("Getting all customers");
-    var result = await _mediator.Send(new GetAllCustomersQuery());
-    return Ok(result);
+    try
+    {
+      _logger.LogInformation("Getting all customers");
+      var result = await _mediator.Send(new GetAllCustomersQuery());
+      return Ok(result);
+    }
+    catch (System.Exception ex)
+    {
+      _logger.LogError(ex, "An error occurred while getting all customers");
+      return StatusCode(500, "An error occurred while processing your request.");
+    }
+
   }
 
 
