@@ -329,11 +329,59 @@ Run the API project and navigate to `https://localhost:<port>/swagger` to view a
 
 ---
 
-## Step 6 — Export Database Script for AI-Assisted Data Layer Generation
+## Step 6 — Setup CORS (Cross-Origin Resource Sharing)
+
+CORS allows your API to be safely called from web frontends running on different domains (e.g., localhost:3000 for React, or a deployed SPA). Proper CORS setup is essential for local development and production.
+
+### 6.1 — Register CORS Services
+
+Add CORS services in `Program.cs` before adding controllers:
+
+```csharp
+// AWMicroservices.SalesOrders.API/Program.cs
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowSpecificOrigins", policy =>
+    {
+        policy.WithOrigins(
+            "https://localhost:3000", // React/SPA dev server
+            "https://your-production-frontend.com" // Production frontend
+        )
+        .AllowAnyHeader()
+        .AllowAnyMethod();
+        // .AllowCredentials(); // Uncomment if using cookies/auth
+    });
+});
+```
+
+### 6.2 — Use CORS Middleware
+
+Add the CORS middleware before `app.UseAuthorization()` and after `app.UseHttpsRedirection()`:
+
+```csharp
+app.UseCors("AllowSpecificOrigins");
+```
+
+### 6.3 — Configuration Options
+
+- `WithOrigins(...)`: Specify allowed frontend URLs. Use HTTPS in production.
+- `AllowAnyHeader()`: Allow all headers (or use `.WithHeaders(...)` for specific ones).
+- `AllowAnyMethod()`: Allow all HTTP methods (GET, POST, etc.).
+- `AllowCredentials()`: Allow cookies/auth headers (only if needed, and origins must not be '\*').
+
+> **Tip:** For development, you can use `.AllowAnyOrigin()` but never use it in production.
+
+### 6.4 — Reference
+
+- [Microsoft Docs: Enable Cross-Origin Requests (CORS) in ASP.NET Core](https://learn.microsoft.com/aspnet/core/security/cors?view=aspnetcore-8.0)
+
+---
+
+## Step 7 — Export Database Script for AI-Assisted Data Layer Generation
 
 Before writing any code, export a full database script from the existing SQL Server database. This script is provided to an AI tool to generate the **Domain Entities**, **DbContext**, **Fluent API configurations**, and **Repository** implementations that the remaining steps build upon.
 
-### 6.1 — Generate the Script in SSMS
+### 7.1 — Generate the Script in SSMS
 
 1. In **SQL Server Management Studio (SSMS)**, open **Object Explorer**.
 2. Right-click the target database (e.g., `AdventureWorks`).
@@ -347,7 +395,7 @@ Before writing any code, export a full database script from the existing SQL Ser
 
 5. Save the output as a single `.sql` file (e.g., `AdventureWorks_FullScript.sql`).
 
-### 6.2 — Use the Script with AI to Generate the Data Layer
+### 7.2 — Use the Script with AI to Generate the Data Layer
 
 Provide the exported `.sql` file to an AI tool (e.g., GitHub Copilot, ChatGPT) with a prompt such as:
 
@@ -366,18 +414,18 @@ The AI will produce:
 
 ---
 
-## Step 7 — Define the Domain Layer
+## Step 8 — Define the Domain Layer
 
 The Domain layer contains **pure business logic** with no external dependencies.
 
-### 7.1 — Install Entity Framework Core (for Infrastructure Layer)
+### 8.1 — Install Entity Framework Core (for Infrastructure Layer)
 
 ```bash
 dotnet add AWMicroservices.SalesOrders.Infrastructure package Microsoft.EntityFrameworkCore.SqlServer
 dotnet add AWMicroservices.SalesOrders.Infrastructure package Microsoft.EntityFrameworkCore.Tools
 ```
 
-### 7.2 — Entities
+### 8.2 — Entities
 
 For this project, we have imported all relevant entities from the AdventureWorks database using AI-assisted generation based on the exported SQL script (see Step 5.2). The entities are placed in the `Domain/Entities/` folder, following Clean Architecture principles with private setters, guard clauses, and EF Core compatibility.
 
@@ -451,7 +499,7 @@ public class Product
 }
 ```
 
-### 7.3 — Repository Interfaces
+### 8.3 — Repository Interfaces
 
 For this project, we have generated all repository interfaces for the imported entities using AI-assisted generation based on the entities and SQL script (see Step 5.2). The interfaces are placed in the `Domain/Interfaces/` folder.
 
@@ -469,7 +517,7 @@ public interface IProductRepository
 }
 ```
 
-### 7.4 — Value Objects (optional but recommended)
+### 8.4 — Value Objects (optional but recommended)
 
 ```csharp
 // AWMicroservices.SalesOrders.Domain/ValueObjects/Money.cs
@@ -481,7 +529,7 @@ public record Money(decimal Amount, string Currency)
 }
 ```
 
-### 7.5 — Domain Exceptions
+### 8.5 — Domain Exceptions
 
 ```csharp
 // AWMicroservices.SalesOrders.Domain/Exceptions/NotFoundException.cs
@@ -493,18 +541,18 @@ public class NotFoundException(string entityName, object key)
 
 ---
 
-## Step 8 — Define the Application Layer
+## Step 9 — Define the Application Layer
 
 The Application layer contains **use cases** (business workflows). It depends only on Domain.
 
-### 8.1 — Install MediatR
+### 9.1 — Install MediatR
 
 ```bash
 dotnet add AWMicroservices.SalesOrders.Application package MediatR
 dotnet add AWMicroservices.SalesOrders.Application package FluentValidation
 ```
 
-### 8.2 — DTOs
+### 9.2 — DTOs
 
 ```csharp
 // AWMicroservices.SalesOrders.Application/Products/DTOs/ProductDto.cs
@@ -513,7 +561,7 @@ namespace AWMicroservices.SalesOrders.Application.Products.DTOs;
 public record ProductDto(int Id, string Name, decimal Price);
 ```
 
-### 8.3 — CQRS Queries
+### 9.3 — CQRS Queries
 
 ```csharp
 // AWMicroservices.SalesOrders.Application/Products/Queries/GetProductByIdQuery.cs
@@ -536,7 +584,7 @@ public class GetProductByIdHandler(IProductRepository repository)
 }
 ```
 
-### 8.4 — CQRS Commands
+### 9.4 — CQRS Commands
 
 ```csharp
 // AWMicroservices.SalesOrders.Application/Products/Commands/CreateProductCommand.cs
@@ -558,7 +606,7 @@ public class CreateProductHandler(IProductRepository repository)
 }
 ```
 
-### 8.5 — Validation with FluentValidation
+### 9.5 — Validation with FluentValidation
 
 ```csharp
 // AWMicroservices.SalesOrders.Application/Products/Commands/CreateProductCommandValidator.cs
@@ -576,7 +624,7 @@ public class CreateProductCommandValidator : AbstractValidator<CreateProductComm
 }
 ```
 
-### 8.6 — Register Application Services
+### 9.6 — Register Application Services
 
 ```csharp
 // AWMicroservices.SalesOrders.Application/DependencyInjection.cs
@@ -599,11 +647,11 @@ public static class DependencyInjection
 
 ---
 
-## Step 9 — Implement the Infrastructure Layer
+## Step 10 — Implement the Infrastructure Layer
 
 The Infrastructure layer implements interfaces defined in Domain/Application.
 
-### 9.1 — DbContext
+### 10.1 — DbContext
 
 ```csharp
 // AWMicroservices.SalesOrders.Infrastructure/Persistence/AppDbContext.cs
@@ -623,7 +671,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 }
 ```
 
-### 9.2 — Entity Configuration
+### 10.2 — Entity Configuration
 
 ```csharp
 // AWMicroservices.SalesOrders.Infrastructure/Persistence/Configurations/ProductConfiguration.cs
@@ -644,7 +692,7 @@ public class ProductConfiguration : IEntityTypeConfiguration<Product>
 }
 ```
 
-### 9.3 — Repository Implementation
+### 10.3 — Repository Implementation
 
 ```csharp
 // AWMicroservices.SalesOrders.Infrastructure/Persistence/Repositories/ProductRepository.cs
@@ -686,7 +734,7 @@ public class ProductRepository(AppDbContext context) : IProductRepository
 }
 ```
 
-### 9.4 — Register Infrastructure Services
+### 10.4 — Register Infrastructure Services
 
 ```csharp
 // AWMicroservices.SalesOrders.Infrastructure/DependencyInjection.cs
@@ -717,9 +765,9 @@ public static class DependencyInjection
 
 ---
 
-## Step 10 — Implement the Presentation (API) Layer
+## Step 11 — Implement the Presentation (API) Layer
 
-### 10.1 — Wire Up DI in Program.cs
+### 11.1 — Wire Up DI in Program.cs
 
 ```csharp
 // AWMicroservices.SalesOrders.API/Program.cs
@@ -747,7 +795,7 @@ app.MapControllers();
 app.Run();
 ```
 
-### 9.2 — Controller
+### 11.2 — Controller
 
 ```csharp
 // AWMicroservices.SalesOrders.API/Controllers/ProductsController.cs
@@ -778,7 +826,7 @@ public class ProductsController(IMediator mediator) : ControllerBase
 }
 ```
 
-### 9.3 — Global Exception Handling (optional but recommended)
+### 11.3 — Global Exception Handling (optional but recommended)
 
 ```csharp
 // AWMicroservices.SalesOrders.API/Middleware/ExceptionHandlingMiddleware.cs
@@ -818,7 +866,7 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 ---
 
-## Step 10 — Apply EF Core Migrations
+## Step 12 — Apply EF Core Migrations
 
 Once all AI-generated and hand-crafted code from the previous steps has been reviewed and placed in the correct projects:
 
@@ -836,7 +884,7 @@ dotnet ef database update --project ../AWMicroservices.SalesOrders.Infrastructur
 
 ---
 
-## Step 11 — Add Observability: Tracing (Jaeger), Metrics (Prometheus), and Dashboards (Grafana)
+## Step 13 — Add Observability: Tracing (Jaeger), Metrics (Prometheus), and Dashboards (Grafana)
 
 The three pillars of observability each address a different question:
 
@@ -848,7 +896,7 @@ The three pillars of observability each address a different question:
 
 All three are wired through the **OpenTelemetry** SDK so the application code is vendor-neutral.
 
-### 11.1 — Install NuGet Packages
+### 13.1 — Install NuGet Packages
 
 Add OpenTelemetry packages to the **API** project (and optionally Infrastructure for DB tracing):
 
@@ -866,7 +914,7 @@ dotnet add AWMicroservices.SalesOrders.API package OpenTelemetry.Exporter.OpenTe
 dotnet add AWMicroservices.SalesOrders.API package OpenTelemetry.Exporter.Prometheus.AspNetCore --prerelease
 ```
 
-### 11.2 — Configure OpenTelemetry in Program.cs
+### 13.2 — Configure OpenTelemetry in Program.cs
 
 ```csharp
 // AWMicroservices.SalesOrders.API/Program.cs
@@ -911,7 +959,7 @@ Map the `/metrics` scrape endpoint in the middleware pipeline (after `app.UseHtt
 app.MapPrometheusScrapingEndpoint(); // default path: /metrics
 ```
 
-### 11.3 — Add Configuration to appsettings.json
+### 13.3 — Add Configuration to appsettings.json
 
 ```json
 // AWMicroservices.SalesOrders.API/appsettings.json
@@ -933,7 +981,7 @@ Override for local development in `appsettings.Development.json`:
 }
 ```
 
-### 11.4 — Run Jaeger Locally with Docker
+### 13.4 — Run Jaeger Locally with Docker
 
 ```bash
 docker run -d --name jaeger \
@@ -951,7 +999,7 @@ docker run -d --name jaeger \
 
 Open the Jaeger UI at `http://localhost:16686` after starting the application.
 
-### 11.5 — Run Prometheus and Grafana Locally with Docker Compose
+### 13.5 — Run Prometheus and Grafana Locally with Docker Compose
 
 Create `docker-compose.observability.yml` in the solution root:
 
@@ -1011,7 +1059,7 @@ docker compose -f docker-compose.observability.yml up -d
 | `http://localhost:9090` | Prometheus query UI               |
 | `http://localhost:3000` | Grafana dashboard (admin / admin) |
 
-### 11.6 — Configure Grafana to Use Prometheus as a Data Source
+### 13.6 — Configure Grafana to Use Prometheus as a Data Source
 
 1. Open Grafana at `http://localhost:3000` and log in (admin / admin).
 2. Go to **Connections → Data Sources → Add data source**.
@@ -1025,7 +1073,7 @@ To add a pre-built ASP.NET Core dashboard:
 2. Enter dashboard ID **`19924`** (ASP.NET Core — OpenTelemetry) from grafana.com.
 3. Select the Prometheus data source and click **Import**.
 
-### 11.7 — Add Custom Spans in Application Code (Optional)
+### 13.7 — Add Custom Spans in Application Code (Optional)
 
 Inject `ActivitySource` to create custom trace spans inside use-case handlers:
 
@@ -1069,15 +1117,15 @@ Register the `ActivitySource` in the Application `DependencyInjection.cs`:
 services.AddSingleton(AppActivitySource.Instance);
 ```
 
-The `.AddSource(AppActivitySource.Instance.Name)` call in Step 11.2 already connects it to the OpenTelemetry tracing pipeline.
+The `.AddSource(AppActivitySource.Instance.Name)` call in Step 13.2 already connects it to the OpenTelemetry tracing pipeline.
 
 ---
 
-## Step 12 — Add Health Checks
+## Step 14 — Add Health Checks
 
 Health checks expose HTTP endpoints that monitoring systems, container orchestrators (Kubernetes, Docker), and load balancers can poll to determine whether the application is alive and ready to serve traffic.
 
-### 12.1 — Install NuGet Packages
+### 14.1 — Install NuGet Packages
 
 ```bash
 dotnet add AWMicroservices.SalesOrders.API package Microsoft.Extensions.Diagnostics.HealthChecks
@@ -1087,7 +1135,7 @@ dotnet add AWMicroservices.SalesOrders.API package AspNetCore.HealthChecks.UI.Cl
 dotnet add AWMicroservices.SalesOrders.API package AspNetCore.HealthChecks.UI.InMemory.Storage
 ```
 
-### 12.2 — Register Health Checks in Program.cs
+### 14.2 — Register Health Checks in Program.cs
 
 ```csharp
 // AWMicroservices.SalesOrders.API/Program.cs
@@ -1115,7 +1163,7 @@ builder.Services
     .AddInMemoryStorage();
 ```
 
-### 12.3 — Map Health Check Endpoints
+### 14.3 — Map Health Check Endpoints
 
 Add the following after `app.UseHttpsRedirection()` and before `app.MapControllers()` in `Program.cs`:
 
@@ -1144,7 +1192,7 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 app.MapHealthChecksUI(options => options.UIPath = "/health-ui");
 ```
 
-### 12.4 — Add a Custom Health Check (Optional)
+### 14.4 — Add a Custom Health Check (Optional)
 
 For checks not covered by a library (e.g., a third-party API dependency):
 
@@ -1184,7 +1232,7 @@ services.AddHealthChecks()
     .AddCheck<ExternalApiHealthCheck>("external-api", tags: ["external", "ready"]);
 ```
 
-### 12.5 — Health Check Endpoints Reference
+### 14.5 — Health Check Endpoints Reference
 
 | Endpoint        | Purpose                                        |
 | --------------- | ---------------------------------------------- |
@@ -1195,11 +1243,11 @@ services.AddHealthChecks()
 
 ---
 
-## Step 13 — Add Resilience with Polly
+## Step 15 — Add Resilience with Polly
 
 Polly (via `Microsoft.Extensions.Http.Resilience`) adds retry, circuit-breaker, timeout, and hedging policies to outbound `HttpClient` calls made from the Infrastructure layer. In .NET 8+ the recommended entry point is the built-in resilience pipeline; raw Polly policies are still available for fine-grained control.
 
-### 13.1 — Install NuGet Package
+### 15.1 — Install NuGet Package
 
 ```bash
 dotnet add AWMicroservices.SalesOrders.Infrastructure package Microsoft.Extensions.Http.Resilience
@@ -1207,7 +1255,7 @@ dotnet add AWMicroservices.SalesOrders.Infrastructure package Microsoft.Extensio
 
 > `Microsoft.Extensions.Http.Resilience` targets Polly v8 and integrates directly with `IHttpClientBuilder`.
 
-### 13.2 — Add a Standard Resilience Pipeline (Recommended)
+### 15.2 — Add a Standard Resilience Pipeline (Recommended)
 
 The standard pipeline bundles retry, circuit breaker, attempt timeout, and total request timeout with sensible defaults.
 
@@ -1247,7 +1295,7 @@ public static class DependencyInjection
 }
 ```
 
-### 13.3 — Customise the Resilience Pipeline (Optional)
+### 15.3 — Customise the Resilience Pipeline (Optional)
 
 Override individual pipeline options when the defaults do not fit:
 
@@ -1274,7 +1322,7 @@ services.AddHttpClient("ExternalApiClient", client =>
     });
 ```
 
-### 13.4 — Consume the HttpClient in a Service
+### 15.4 — Consume the HttpClient in a Service
 
 Inject `IHttpClientFactory` into any Infrastructure service that calls external APIs:
 
@@ -1317,7 +1365,7 @@ Register the service in `Infrastructure/DependencyInjection.cs`:
 services.AddScoped<IExternalProductService, ExternalProductService>();
 ```
 
-### 13.5 — Polly Policy Summary
+### 15.5 — Polly Policy Summary
 
 | Policy              | Default Behaviour (Standard Pipeline)                         |
 | ------------------- | ------------------------------------------------------------- |
@@ -1329,11 +1377,11 @@ services.AddScoped<IExternalProductService, ExternalProductService>();
 
 ---
 
-## Step 14 — Add an Ocelot API Gateway
+## Step 16 — Add an Ocelot API Gateway
 
 Ocelot is a .NET API Gateway that acts as a single entry point for client traffic. It routes requests to the appropriate downstream microservices, handles authentication, rate-limiting, load balancing, and more — without clients needing to know individual service addresses.
 
-### 14.1 — Create the Gateway Project
+### 16.1 — Create the Gateway Project
 
 ```bash
 # Create a minimal Web API project for the gateway
@@ -1345,7 +1393,7 @@ dotnet sln add AWMicroservices.SalesOrders.Gateway/AWMicroservices.SalesOrders.G
 
 > The Gateway has **no references** to any other project in the solution. It only needs Ocelot and is a standalone reverse-proxy entry point.
 
-### 14.2 — Install Ocelot
+### 16.2 — Install Ocelot
 
 ```bash
 dotnet add AWMicroservices.SalesOrders.Gateway package Ocelot
@@ -1358,7 +1406,7 @@ dotnet add AWMicroservices.SalesOrders.Gateway package Ocelot.Provider.Polly   #
 dotnet add AWMicroservices.SalesOrders.Gateway package Microsoft.AspNetCore.Authentication.JwtBearer
 ```
 
-### 14.3 — Create ocelot.json
+### 16.3 — Create ocelot.json
 
 Define the downstream routes Ocelot will proxy. Place this file in the Gateway project root.
 
@@ -1425,7 +1473,7 @@ Create an environment-specific override for local development:
 }
 ```
 
-### 14.4 — Configure Program.cs
+### 16.4 — Configure Program.cs
 
 ```csharp
 // AWMicroservices.SalesOrders.Gateway/Program.cs
@@ -1461,7 +1509,7 @@ await app.UseOcelot();
 app.Run();
 ```
 
-### 14.5 — Add Gateway Configuration to appsettings.json
+### 16.5 — Add Gateway Configuration to appsettings.json
 
 ```json
 // AWMicroservices.SalesOrders.Gateway/appsettings.json
@@ -1480,7 +1528,7 @@ app.Run();
 }
 ```
 
-### 14.6 — Register the Gateway in the Solution
+### 16.6 — Register the Gateway in the Solution
 
 ```bash
 # The gateway project is already added to the solution (Step 14.1).
@@ -1491,7 +1539,7 @@ app.Run();
 dotnet sln list
 ```
 
-### 14.7 — Gateway Architecture Overview
+### 16.7 — Gateway Architecture Overview
 
 ```
 Client
